@@ -79,3 +79,91 @@
 .recording-list{margin-top:0}
 .inline-status{margin-top:15px;padding:10px 12px;border:1px solid #285370;border-radius:6px;background:#102638;color:#79c9ff;font-size:10px}
 kbd{min-width:84px;text-align:center;padding:6px 9px;border:1px solid #34495b;border-bottom-width:2px;border-radius:5px;background:#111f2c;color:#cbd8e2;font:10px/1.2 ui-monospace,monospace}
+
+/* ================= Virtual MIDI keyboard ================= */
+.piano-keyboard{--pk-accent:#1d9cff;position:relative;width:100%;border-radius:10px;padding:10px 10px 0;background:linear-gradient(180deg,#0a1622,#060f18);border:1px solid #1d3346;box-shadow:inset 0 2px 12px #0009,0 6px 20px #0006;user-select:none;touch-action:none}
+.piano-keyboard .pk-felt{height:5px;margin:-4px -4px 8px;border-radius:4px;background:linear-gradient(180deg,#8d1f2d,#5c1220);box-shadow:0 1px 4px #000a}
+.piano-keyboard .pk-keys{position:relative;height:132px}
+.piano-keyboard.pk-compact .pk-keys{height:82px}
+.piano-keyboard .pk-white-row{display:flex;height:100%;gap:0}
+.piano-keyboard .pk-black-row{position:absolute;inset:0;pointer-events:none}
+.piano-keyboard .pk-black-row .pk-black{pointer-events:auto}
+
+.pk-white{position:relative;height:100%;border:0;border-right:1px solid #26364a;border-radius:0 0 5px 5px;background:linear-gradient(180deg,#fdfefe 0%,#eef3f8 78%,#d6dfe8 100%);box-shadow:inset 0 -6px 8px -6px #94a5b8;cursor:pointer;display:flex;align-items:flex-end;justify-content:center;padding-bottom:6px;transition:background .06s,transform .06s}
+.pk-white:last-child{border-right:0}
+.pk-white .pk-label{font-size:9px;font-weight:600;color:#7b8b9d;pointer-events:none}
+.pk-white.pk-hover{background:linear-gradient(180deg,#fff,#e4ecf4 80%,#cdd8e4)}
+.pk-white.pk-active{background:linear-gradient(180deg,color-mix(in srgb,var(--pk-accent) 34%,#fff),color-mix(in srgb,var(--pk-accent) 60%,#dfe8f2));box-shadow:inset 0 -3px 10px -4px #0006,0 0 14px -2px var(--pk-accent);transform:translateY(1px)}
+.pk-white.pk-active .pk-label{color:#0b1a28}
+.pk-white.pk-in-scale:not(.pk-active):after{content:"";position:absolute;bottom:3px;left:50%;transform:translateX(-50%);width:4px;height:4px;border-radius:50%;background:var(--pk-accent);opacity:.5}
+
+.pk-black{position:absolute;top:0;height:62%;border:0;border-radius:0 0 4px 4px;background:linear-gradient(180deg,#2b3745 0%,#131c26 62%,#080d13 100%);box-shadow:0 3px 6px #000a,inset 0 -3px 4px -2px #4a5a6d;cursor:pointer;z-index:2;display:flex;align-items:flex-end;justify-content:center;padding-bottom:4px;transition:background .06s,transform .06s}
+.pk-black.pk-hover{background:linear-gradient(180deg,#3a4858,#1a242f 62%,#0b1219)}
+.pk-black.pk-active{background:linear-gradient(180deg,color-mix(in srgb,var(--pk-accent) 76%,#0d1620),color-mix(in srgb,var(--pk-accent) 44%,#050a10));box-shadow:0 0 14px -1px var(--pk-accent),inset 0 -2px 4px -2px #7fb6e6;transform:translateY(1px)}
+.pk-black .pk-black-label{font-size:8px;font-weight:600;color:#c6d4e3;pointer-events:none}
+.pk-black.pk-in-scale:not(.pk-active):after{content:"";position:absolute;bottom:4px;left:50%;transform:translateX(-50%);width:3px;height:3px;border-radius:50%;background:var(--pk-accent);opacity:.65}
+
+/* ================= Chord readout ================= */
+.chord-display{display:flex;flex-direction:column;gap:5px;padding:9px 12px;border-radius:9px;background:rgba(8,20,32,.82);border:1px solid #1d3346}
+.chord-display.compact{flex-direction:row;align-items:center;gap:12px;padding:6px 11px;flex-wrap:wrap}
+.chord-display .chord-main{display:flex;align-items:baseline;gap:9px}
+.chord-display .chord-symbol{font-size:25px;font-weight:700;letter-spacing:-.02em;color:#f2f7fc;line-height:1.05}
+.chord-display.compact .chord-symbol{font-size:19px}
+.chord-display .chord-symbol.placeholder{color:#41576d}
+.chord-display .chord-numeral{font-size:13px;font-weight:700;color:var(--blue);padding:2px 7px;border-radius:5px;background:rgba(21,156,255,.13);border:1px solid rgba(21,156,255,.3)}
+.chord-display .chord-meta{display:flex;gap:7px;flex-wrap:wrap;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:#8598ab}
+.chord-display .chord-inversion{color:#c8a24a}
+.chord-display .chord-partial{color:#7e8fa2;font-style:italic}
+.chord-display .chord-notes{display:flex;gap:4px;flex-wrap:wrap}
+.chord-display .chord-note{font-size:10px;font-weight:600;color:#a9bccd;background:#102030;border:1px solid #22394d;border-radius:4px;padding:1px 5px}
+.chord-display .chord-hint{font-size:10px;color:#5d7288}
+
+.key-selector{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.key-selector select{background:#0f1e2d;color:#dbe6f1;border:1px solid #22394d;border-radius:6px;padding:4px 7px;font-size:12px}
+.key-selector .key-scale{font-size:10px;color:#7f93a7;letter-spacing:.04em}
+.visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+
+/* ================= Meters ================= */
+.meter{position:relative;height:6px;border-radius:3px;background:#0d1a27;overflow:hidden;border:1px solid #1a2c3d}
+.meter i{display:block;height:100%;background:linear-gradient(90deg,#39dfa0,#c9e04a 76%,#ff5f68 96%);transition:width .06s linear}
+.meter.clipping i{background:#ff4c55}
+.tall-meter{position:relative;width:9px;height:118px;border-radius:5px;background:#0d1a27;border:1px solid #1a2c3d;overflow:hidden}
+.tall-meter i{position:absolute;bottom:0;left:0;right:0;background:linear-gradient(0deg,#39dfa0,#c9e04a 76%,#ff5f68 96%);transition:height .06s linear}
+.tall-meter u{position:absolute;left:0;right:0;height:2px;background:#eaf3ff;opacity:.8}
+.tall-meter.clipping{border-color:#ff4c55;box-shadow:0 0 8px -1px #ff4c55}
+
+/* ================= Misc additions ================= */
+.select-wrap{position:relative;display:inline-flex;align-items:center}
+.select-wrap select.select-box{appearance:none;width:100%;background:#0f1e2d;color:#dbe6f1;border:1px solid #22394d;border-radius:6px;padding:6px 26px 6px 9px;font-size:12px;cursor:pointer}
+.select-wrap select.select-box:disabled{color:#5d7288;cursor:not-allowed;background:#0b1622}
+.select-wrap>svg{position:absolute;right:8px;pointer-events:none;color:#6d8299}
+.select-wrap.is-empty select.select-box{font-style:italic}
+.page-banner{margin:0 0 14px;padding:9px 13px;border-radius:8px;font-size:12px;background:rgba(21,156,255,.1);border:1px solid rgba(21,156,255,.28);color:#bcd6ec}
+.page-banner.error{background:rgba(255,76,85,.1);border-color:rgba(255,76,85,.32);color:#ffc4c7}
+.field-hint{display:block;margin-top:5px;font-size:10px;color:#7f93a7}
+.static-value{font-size:12px;color:#9fb2c4;font-family:ui-monospace,monospace}
+.composition .face-camera{position:relative}
+.camera-fallback{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;color:#5d7288;background:#08131e}
+.camera-fallback small{font-size:10px}
+.source.off{opacity:.62}
+.source.locked{opacity:.5;cursor:default}
+.header-status i.live{background:#39dfa0;box-shadow:0 0 8px #39dfa0}
+.gain-ring.ducking{box-shadow:0 0 22px -4px var(--blue)}
+.tip.active{border-color:rgba(21,156,255,.45);background:rgba(21,156,255,.1)}
+.channel-icon.instrument{background:rgba(21,156,255,.16);color:#6cc0ff}
+
+/* ---- Composition framing ----------------------------------------------
+   The preview claims 1920 x 1080, so it must actually be 16:9 — otherwise
+   what the teacher arranges is not what gets recorded. */
+.canvas-shell{display:flex;flex-direction:column}
+.canvas-shell .composition{flex:0 1 auto;aspect-ratio:16/9;width:100%;max-height:100%;margin:0 auto;
+  grid-template-rows:42% 26% 32%}
+.composition .vmk{display:flex;flex-direction:column;gap:5px;min-height:0;overflow:hidden;justify-content:center}
+.composition .vmk .piano-keyboard{flex:0 1 auto;min-height:0;padding:6px 8px 0}
+.composition .vmk .piano-keyboard .pk-keys{height:62px}
+.composition .vmk .chord-display{flex:0 0 auto;padding:4px 9px;background:rgba(4,12,20,.7)}
+.composition .vmk .chord-display .chord-symbol{font-size:16px}
+.composition .vmk .chord-display .chord-notes{display:none}
+.transport-meter{display:flex;align-items:center;gap:6px;min-width:150px}
+.transport-meter .meter{flex:1;min-width:70px}
+.transport-meter b{font-variant-numeric:tabular-nums;font-size:10px;color:#9fb2c4;min-width:34px;text-align:right}

@@ -4,6 +4,17 @@ const path = require('path');
 
 let mainWindow;
 
+const projectsFolder = () => path.join(app.getPath('documents'), 'PianoTutor', 'Projects');
+const recordingsFolder = () => path.join(app.getPath('videos'), 'PianoTutor');
+
+/** Strip anything that could escape the target folder or upset Windows. */
+const safeFileName = (value, fallback) => {
+  const base = path.basename(String(value ?? '')).replace(/[^a-z0-9._-]/gi, '_').replace(/^\.+/, '');
+  return base || fallback;
+};
+
+const timestamp = () => new Date().toISOString().replace(/[:.]/g, '-');
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1536,
@@ -16,6 +27,9 @@ function createWindow() {
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
+      // Keep timers, audio and the recorder running at full rate when the
+      // window is minimised — a lesson often keeps recording while hidden.
+      backgroundThrottling: false,
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -26,59 +40,117 @@ function createWindow() {
   else mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
 
   mainWindow.once('ready-to-show', () => mainWindow.show());
+  mainWindow.on('closed', () => { mainWindow = undefined; });
 }
 
 app.whenReady().then(() => {
+  // Grant the capture permissions the studio needs. Everything else is denied.
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-    callback(['media', 'midi', 'midiSysex'].includes(permission));
+    callback(['media', 'midi', 'midiSysex', 'audioCapture', 'videoCapture'].includes(permission));
   });
+  session.defaultSession.setPermissionCheckHandler((_wc, permission) =>
+    ['media', 'midi', 'midiSysex', 'audioCapture', 'videoCapture'].includes(permission));
+
   session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
-    const sources = await desktopCapturer.getSources({ types: ['window', 'screen'] });
-    const source = sources.find(item => item.name.includes('PianoTutor')) || sources.find(item => item.name === 'Entire screen') || sources[0];
-    callback({ video: source });
+    try {
+      const sources = await desktopCapturer.getSources({ types: ['window', 'screen'] });
+      const source =
+        sources.find(item => item.name && item.name.includes('PianoTutor')) ||
+        sources.find(item => item.name === 'Entire screen') ||
+        sources.find(item => item.id.startsWith('screen')) ||
+        sources[0];
+      if (!source) { callback({}); return; }
+      callback({ video: source });
+    } catch {
+      callback({});
+    }
   });
+
   ipcMain.on('window:minimize', () => mainWindow?.minimize());
-  ipcMain.on('window:maximize', () => mainWindow?.isMaximized() ? mainWindow.unmaximize() : mainWindow?.maximize());
+  ipcMain.on('window:maximize', () => (mainWindow?.isMaximized() ? mainWindow.unmaximize() : mainWindow?.maximize()));
   ipcMain.on('window:close', () => mainWindow?.close());
-  ipcMain.handle('recording:save', async (_event, bytes, suggestedName) => {
-    const folder = path.join(app.getPath('videos'), 'PianoTutor');
+
+  ipcMain.handle('recording:save', async (_event, bytes, suggestedName, extension) => {
+    const folder = recordingsFolder();
     await fs.mkdir(folder, { recursive: true });
-    const safeName = String(suggestedName || 'PianoTutor_Lesson').replace(/[^a-z0-9._-]/gi, '_');
-    const filePath = path.join(folder, `${safeName}_${new Date().toISOString().replace(/[:.]/g, '-')}.webm`);
+    const ext = /^(webm|mp4|mov|mkv)$/i.test(String(extension || '')) ? String(extension).toLowerCase() : 'webm';
+    const filePath = path.join(folder, `${safeFileName(suggestedName, 'PianoTutor_Lesson')}_${timestamp()}.${ext}`);
     await fs.writeFile(filePath, Buffer.from(bytes));
     return filePath;
   });
-  ipcMain.handle('project:save', async (_event, project) => {
-    const folder = path.join(app.getPath('documents'), 'PianoTutor', 'Projects');
+
+  ipcMain.handle('midi:save', async (_event, bytes, suggestedName) => {
+    const folder = recordingsFolder();
     await fs.mkdir(folder, { recursive: true });
-    const safeName = String(project?.name || 'Untitled Lesson').replace(/[^a-z0-9._-]/gi, '_');
-    const filePath = path.join(folder, `${safeName}.pianotutor.json`);
-    await fs.writeFile(filePath, JSON.stringify({ ...project, version: 1, savedAt: new Date().toISOString() }, null, 2), 'utf8');
+    const filePath = path.join(folder, `${safeFileName(suggestedName, 'PianoTutor_Lesson')}_${timestamp()}.mid`);
+    await fs.writeFile(filePath, Buffer.from(bytes));
     return filePath;
   });
+
+  ipcMain.handle('project:save', async (_event, project) => {
+    const folder = projectsFolder();
+    await fs.mkdir(folder, { recursive: true });
+    const filePath = path.join(folder, `${safeFileName(project && project.name, 'Untitled_Lesson')}.pianotutor.json`);
+    const payload = { ...(project || {}), version: 1, savedAt: new Date().toISOString() };
+    await fs.writeFile(filePath, JSON.stringify(payload, null, 2), 'utf8');
+    return filePath;
+  });
+
   ipcMain.handle('project:list', async () => {
-    const folder = path.join(app.getPath('documents'), 'PianoTutor', 'Projects');
+    const folder = projectsFolder();
     await fs.mkdir(folder, { recursive: true });
     const files = (await fs.readdir(folder)).filter(name => name.endsWith('.pianotutor.json'));
     const projects = await Promise.all(files.map(async name => {
-      const filePath=path.join(folder,name); const stat=await fs.stat(filePath); let data={};
-      try{data=JSON.parse(await fs.readFile(filePath,'utf8'))}catch{}
-      return {filePath,name:data.name||name.replace('.pianotutor.json',''),savedAt:data.savedAt||stat.mtime.toISOString(),scene:data.scene||'Default Lesson'};
+      const filePath = path.join(folder, name);
+      const stat = await fs.stat(filePath);
+      let data = {};
+      try { data = JSON.parse(await fs.readFile(filePath, 'utf8')); } catch { /* keep the filename fallback */ }
+      return {
+        filePath,
+        name: data.name || name.replace('.pianotutor.json', ''),
+        savedAt: data.savedAt || stat.mtime.toISOString(),
+        scene: data.scene || 'Default Lesson',
+      };
     }));
-    return projects.sort((a,b)=>String(b.savedAt).localeCompare(String(a.savedAt)));
+    return projects.sort((a, b) => String(b.savedAt).localeCompare(String(a.savedAt)));
   });
+
   ipcMain.handle('recording:list', async () => {
-    const folder=path.join(app.getPath('videos'),'PianoTutor');await fs.mkdir(folder,{recursive:true});
-    const files=(await fs.readdir(folder)).filter(name=>/\.(webm|mp4|mov)$/i.test(name));
-    return Promise.all(files.map(async name=>{const filePath=path.join(folder,name);const stat=await fs.stat(filePath);return {name,filePath,size:stat.size,createdAt:stat.mtime.toISOString()}}));
+    const folder = recordingsFolder();
+    await fs.mkdir(folder, { recursive: true });
+    const files = (await fs.readdir(folder)).filter(name => /\.(webm|mp4|mov|mkv|mid)$/i.test(name));
+    const items = await Promise.all(files.map(async name => {
+      const filePath = path.join(folder, name);
+      const stat = await fs.stat(filePath);
+      return { name, filePath, size: stat.size, createdAt: stat.mtime.toISOString() };
+    }));
+    return items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   });
-  ipcMain.handle('path:open', async (_event,target) => shell.openPath(String(target)));
-  ipcMain.handle('library:open-folder', async (_event,kind) => {
-    const folder=kind==='recordings'?path.join(app.getPath('videos'),'PianoTutor'):path.join(app.getPath('documents'),'PianoTutor','Projects');
-    await fs.mkdir(folder,{recursive:true}); return shell.openPath(folder);
+
+  ipcMain.handle('path:open', async (_event, target) => shell.openPath(String(target)));
+
+  ipcMain.handle('library:open-folder', async (_event, kind) => {
+    const folder = kind === 'recordings' ? recordingsFolder() : projectsFolder();
+    await fs.mkdir(folder, { recursive: true });
+    return shell.openPath(folder);
   });
-  ipcMain.handle('settings:load', async () => {try{return JSON.parse(await fs.readFile(path.join(app.getPath('userData'),'settings.json'),'utf8'))}catch{return {}}});
-  ipcMain.handle('settings:save', async (_event,value) => {const filePath=path.join(app.getPath('userData'),'settings.json');await fs.writeFile(filePath,JSON.stringify(value,null,2),'utf8');return filePath});
+
+  ipcMain.handle('library:paths', async () => ({ projects: projectsFolder(), recordings: recordingsFolder() }));
+
+  ipcMain.handle('settings:load', async () => {
+    try {
+      return JSON.parse(await fs.readFile(path.join(app.getPath('userData'), 'settings.json'), 'utf8'));
+    } catch {
+      return {};
+    }
+  });
+
+  ipcMain.handle('settings:save', async (_event, value) => {
+    const filePath = path.join(app.getPath('userData'), 'settings.json');
+    await fs.writeFile(filePath, JSON.stringify(value, null, 2), 'utf8');
+    return filePath;
+  });
+
   createWindow();
   app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWindow());
 });
