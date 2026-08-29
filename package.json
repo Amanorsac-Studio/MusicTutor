@@ -14,13 +14,6 @@
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run"
   },
-  "dependencies": {
-    "@vitejs/plugin-react": "latest",
-    "lucide-react": "latest",
-    "vite": "latest",
-    "react": "latest",
-    "react-dom": "latest"
-  },
   "devDependencies": {
     "@types/react": "latest",
     "@types/react-dom": "latest",
@@ -32,16 +25,31 @@
     "jsdom": "latest",
     "typescript": "latest",
     "wait-on": "latest",
-    "vitest": "latest"
+    "vitest": "latest",
+    "@vitejs/plugin-react": "latest",
+    "lucide-react": "latest",
+    "vite": "latest",
+    "react": "latest",
+    "react-dom": "latest"
   },
   "main": "electron/main.cjs",
   "build": {
     "appId": "com.pianotutor.studio",
     "productName": "PianoTutor",
-    "directories": { "output": "installer" },
+    "directories": {
+      "output": "installer"
+    },
     "electronDist": "node_modules/electron/dist",
-    "files": ["dist/**/*", "electron/**/*", "package.json"],
-    "win": { "target": "nsis", "artifactName": "PianoTutor-Setup-${version}.${ext}" },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json",
+      "!**/*.map"
+    ],
+    "win": {
+      "target": "nsis",
+      "artifactName": "PianoTutor-Setup-${version}.${ext}"
+    },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
