@@ -7,7 +7,7 @@ import { faderToGain, gainToDb } from '../lib/audioEngine';
 export function Mixer() {
   const {
     channels, levels, settings, updateSettings,
-    setChannelGain, setChannelMuted, setChannelSolo,
+    setChannelGain, setChannelMuted, setChannelSolo, setDuckingTrigger,
   } = useStudio();
 
   const inputChannels = channels.filter(channel => channel.kind !== 'master');
@@ -135,9 +135,11 @@ export function Mixer() {
             <span>Trigger</span>
             <Select
               label="Ducking trigger"
-              value={inputChannels.find(c => c.isVoice)?.id ?? ''}
-              onChange={() => { /* every voice-flagged channel triggers ducking */ }}
-              options={inputChannels.filter(c => c.isVoice).map(c => ({ value: c.id, label: c.label }))}
+              value={inputChannels.find(channel => channel.isVoice)?.id ?? ''}
+              onChange={value => setDuckingTrigger(value)}
+              options={inputChannels
+                .filter(channel => channel.kind === 'input')
+                .map(channel => ({ value: channel.id, label: channel.label }))}
               emptyLabel="Assign a microphone first"
             />
           </div>

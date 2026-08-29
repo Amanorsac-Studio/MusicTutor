@@ -33,6 +33,8 @@ export type StudioValue = {
   setChannelGain: (id: string, value: number) => void;
   setChannelMuted: (id: string, value: boolean) => void;
   setChannelSolo: (id: string, value: boolean) => void;
+  /** Choose which input channel drives the ducking sidechain. */
+  setDuckingTrigger: (id: string) => void;
 
   activeNotes: Set<number>;
   noteOn: (note: number, velocity: number) => void;
@@ -211,6 +213,14 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     syncChannels();
   }, [syncChannels]);
 
+  const setDuckingTrigger = useCallback((id: string) => {
+    // Exactly one input channel drives the sidechain at a time.
+    audioEngine.listChannels().forEach(channel => {
+      if (channel.kind === 'input') audioEngine.setChannelVoice(channel.id, channel.id === id);
+    });
+    syncChannels();
+  }, [syncChannels]);
+
   /* -------------------------------------------------- metering ------- */
 
   // Metering and ducking share one 40 Hz timer.
@@ -222,12 +232,36 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   // far more resolution than a level meter needs anyway.
   useEffect(() => {
     let disposed = false;
+    let sinceCommit = 0;
+    let previous: Record<string, ChannelLevel> = {};
+
+    // Only re-render when a meter would visibly move. While nothing is playing
+    // this settles to zero renders per second instead of forty.
+    const worthRendering = (next: Record<string, ChannelLevel>): boolean => {
+      const keys = Object.keys(next);
+      if (keys.length !== Object.keys(previous).length) return true;
+      return keys.some(key => {
+        const a = previous[key];
+        const b = next[key];
+        if (!a) return true;
+        return Math.abs(a.meter - b.meter) > 0.004 || a.clipping !== b.clipping;
+      });
+    };
+
     const id = window.setInterval(() => {
       if (disposed) return;
       const reading = audioEngine.readLevels();
+      // Ducking follows every tick; the display is throttled below.
       audioEngine.updateDucking(reading);
+
+      sinceCommit += 25;
+      if (sinceCommit < 50) return;
+      sinceCommit = 0;
+      if (!worthRendering(reading)) return;
+      previous = reading;
       setLevels(reading);
     }, 25);
+
     return () => { disposed = true; window.clearInterval(id); };
   }, []);
 
@@ -286,14 +320,14 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const value = useMemo<StudioValue>(() => ({
     settings, updateSettings, persistSettings, settingsLoaded,
     catalog, refreshDevices: refresh,
-    channels, levels, attachInput, detachInput, setChannelGain, setChannelMuted, setChannelSolo,
+    channels, levels, attachInput, detachInput, setChannelGain, setChannelMuted, setChannelSolo, setDuckingTrigger,
     activeNotes, noteOn, noteOff, panic,
     recording, elapsedMs, startRecording, stopRecording,
     notice, setNotice,
   }), [
     settings, updateSettings, persistSettings, settingsLoaded,
     catalog, refresh, channels, levels, attachInput, detachInput,
-    setChannelGain, setChannelMuted, setChannelSolo,
+    setChannelGain, setChannelMuted, setChannelSolo, setDuckingTrigger,
     activeNotes, noteOn, noteOff, panic,
     recording, elapsedMs, startRecording, stopRecording, notice,
   ]);

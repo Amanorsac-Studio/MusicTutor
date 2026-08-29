@@ -26,6 +26,7 @@ const BACKGROUNDS = ['studio', 'blue', 'wood', 'room', 'violet', 'mountain'];
 export function Studio() {
   const {
     settings, updateSettings, catalog, activeNotes, noteOn, noteOff, panic, levels,
+    channels, attachInput, detachInput,
     recording, elapsedMs, startRecording, stopRecording,
   } = useStudio();
 
@@ -42,6 +43,9 @@ export function Studio() {
   const [accent, setAccent] = useState('#1d9cff');
   const [cameraId, setCameraId] = useState('');
   const [cameraError, setCameraError] = useState('');
+  const [midiInputId, setMidiInputId] = useState('');
+
+  const micChannel = channels.find(channel => channel.id === 'mic1');
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -137,10 +141,15 @@ export function Studio() {
             <span>Audio input
               <DeviceSelect
                 devices={catalog.audioInputs}
-                value={settings.outputDeviceId ? settings.outputDeviceId : catalog.audioInputs[0]?.id ?? ''}
-                onChange={() => { /* channel routing lives on the Devices page */ }}
+                value={micChannel?.deviceId ?? ''}
+                onChange={value => {
+                  if (!value) detachInput('mic1');
+                  else void attachInput({ id: 'mic1', label: 'Mic 1', deviceId: value, isVoice: true });
+                }}
                 label="Audio input"
                 emptyLabel="No microphones found"
+                allowNone
+                noneLabel="Not assigned"
               />
             </span>
           </label>
@@ -159,12 +168,18 @@ export function Studio() {
           <label>
             <Keyboard size={17} />
             <span>MIDI input
-              <DeviceSelect
-                devices={catalog.midiInputs}
-                value={catalog.midiInputs[0]?.id ?? ''}
-                onChange={() => { /* all inputs are listened to by default */ }}
+              <Select
                 label="MIDI input"
-                emptyLabel={midiStatusLabel}
+                value={midiInputId}
+                onChange={value => {
+                  setMidiInputId(value);
+                  // An empty value means "listen to every connected port".
+                  midiManager.setEnabledInputs(value ? [value] : undefined);
+                }}
+                options={[
+                  { value: '', label: catalog.midiInputs.length ? 'All MIDI inputs' : midiStatusLabel },
+                  ...catalog.midiInputs.map(port => ({ value: port.id, label: port.name })),
+                ]}
               />
             </span>
           </label>

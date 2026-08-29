@@ -27,6 +27,23 @@ export function Devices() {
   const [camera1Id, setCamera1Id] = useState('');
   const [camera2Id, setCamera2Id] = useState('');
   const [cameraError, setCameraError] = useState('');
+  const [cameraFormat, setCameraFormat] = useState('1080p30');
+  const [midiInputId, setMidiInputId] = useState('');
+
+  /** Re-negotiate the live camera track rather than only relabelling the menu. */
+  const applyCameraFormat = async (format: string) => {
+    const track = stream1.current?.getVideoTracks()[0];
+    if (!track) return;
+    const [width, height, frameRate] = format === '720p30'
+      ? [1280, 720, 30]
+      : format === '1080p60' ? [1920, 1080, 60] : [1920, 1080, 30];
+    try {
+      await track.applyConstraints({ width: { ideal: width }, height: { ideal: height }, frameRate: { ideal: frameRate } });
+      setCameraError('');
+    } catch (error) {
+      setCameraError(error instanceof Error ? `Camera rejected that format: ${error.message}` : 'Format not supported');
+    }
+  };
 
   const video1 = useRef<HTMLVideoElement>(null);
   const video2 = useRef<HTMLVideoElement>(null);
@@ -135,8 +152,8 @@ export function Devices() {
             />
             <Select
               label="Camera 1 format"
-              value="1080p30"
-              onChange={() => { /* format follows the recording quality setting */ }}
+              value={cameraFormat}
+              onChange={value => { setCameraFormat(value); void applyCameraFormat(value); }}
               options={[
                 { value: '720p30', label: '1280 × 720 · 30 fps' },
                 { value: '1080p30', label: '1920 × 1080 · 30 fps' },
@@ -224,12 +241,20 @@ export function Devices() {
                   : catalog.midiInputs.length ? 'CONNECTED' : 'NO DEVICE'}
             </span>
           </div>
-          <DeviceSelect
-            devices={catalog.midiInputs}
-            value={catalog.midiInputs[0]?.id ?? ''}
-            onChange={() => { /* every connected input is listened to */ }}
+          <Select
             label="MIDI input device"
-            emptyLabel={catalog.midi.message ?? 'No MIDI devices detected'}
+            value={midiInputId}
+            onChange={value => {
+              setMidiInputId(value);
+              midiManager.setEnabledInputs(value ? [value] : undefined);
+            }}
+            options={[
+              { value: '', label: catalog.midiInputs.length ? 'All MIDI inputs' : (catalog.midi.message ?? 'No MIDI devices detected') },
+              ...catalog.midiInputs.map(port => ({
+                value: port.id,
+                label: port.manufacturer ? `${port.name} — ${port.manufacturer}` : port.name,
+              })),
+            ]}
           />
           {catalog.midi.message && <small className="field-hint">{catalog.midi.message}</small>}
           <div className="midi-strip">
