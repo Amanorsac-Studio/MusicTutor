@@ -1,0 +1,9 @@
+node_modules/
+dist/
+installer/
+installer-out/
+installer-final/
+release/
+*.tsbuildinfo
+.DS_Store
+*.log

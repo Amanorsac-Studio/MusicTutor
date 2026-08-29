@@ -1,0 +1,16 @@
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('pianoTutorDesktop', {
+  isDesktop: true,
+  minimize: () => ipcRenderer.send('window:minimize'),
+  maximize: () => ipcRenderer.send('window:maximize'),
+  close: () => ipcRenderer.send('window:close'),
+  saveRecording: (bytes, name) => ipcRenderer.invoke('recording:save', bytes, name),
+  saveProject: (project) => ipcRenderer.invoke('project:save', project),
+  listProjects: () => ipcRenderer.invoke('project:list'),
+  listRecordings: () => ipcRenderer.invoke('recording:list'),
+  openPath: (target) => ipcRenderer.invoke('path:open', target),
+  openLibraryFolder: (kind) => ipcRenderer.invoke('library:open-folder', kind),
+  loadSettings: () => ipcRenderer.invoke('settings:load'),
+  saveSettings: (value) => ipcRenderer.invoke('settings:save', value),
+});

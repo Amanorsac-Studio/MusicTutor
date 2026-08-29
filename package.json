@@ -1,0 +1,53 @@
+{
+  "name": "pianotutor-studio",
+  "description": "Desktop lesson production studio for piano educators",
+  "author": "PianoTutor",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "desktop": "electron .",
+    "desktop:dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron . --dev\"",
+    "build": "tsc -b && vite build",
+    "build:windows": "npm run build && electron-builder --win nsis",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "lucide-react": "latest",
+    "vite": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "concurrently": "latest",
+    "electron": "latest",
+    "electron-builder": "latest",
+    "@testing-library/jest-dom": "latest",
+    "@testing-library/react": "latest",
+    "jsdom": "latest",
+    "typescript": "latest",
+    "wait-on": "latest",
+    "vitest": "latest"
+  },
+  "main": "electron/main.cjs",
+  "build": {
+    "appId": "com.pianotutor.studio",
+    "productName": "PianoTutor",
+    "directories": { "output": "installer" },
+    "electronDist": "node_modules/electron/dist",
+    "files": ["dist/**/*", "electron/**/*", "package.json"],
+    "win": { "target": "nsis", "artifactName": "PianoTutor-Setup-${version}.${ext}" },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "PianoTutor"
+    }
+  }
+}
