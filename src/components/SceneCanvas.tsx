@@ -96,6 +96,13 @@ export function SceneCanvas({
     };
 
     fit();
+
+    // ResizeObserver is the right tool but is not universal — jsdom has none —
+    // so fall back to window resizes rather than letting the editor fail.
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', fit);
+      return () => window.removeEventListener('resize', fit);
+    }
     const observer = new ResizeObserver(fit);
     observer.observe(parent);
     return () => observer.disconnect();
