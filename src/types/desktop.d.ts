@@ -14,6 +14,14 @@ export type RecordingSummary = {
   createdAt: string;
 };
 
+export type StreamStatusBridge = {
+  state: 'idle' | 'starting' | 'live' | 'stopping' | 'error';
+  destinations: string[];
+  message?: string;
+  uptime: number;
+  bytesSent: number;
+};
+
 export type DesktopBridge = {
   isDesktop: boolean;
   minimize: () => void;
@@ -30,6 +38,22 @@ export type DesktopBridge = {
   saveSettings: (value: unknown) => Promise<string>;
   /** Absolute paths of the library folders, for display in Settings. */
   paths?: () => Promise<{ projects: string; recordings: string }>;
+
+  /* Live streaming. Chromium cannot speak RTMP, so a bundled ffmpeg in the
+     main process does the transcoding and delivery. */
+  streamAvailable?: () => Promise<boolean>;
+  streamStart?: (
+    targets: Array<{ id: string; name: string; url: string }>,
+    options: {
+      width: number; height: number; frameRate: number;
+      videoBitrate: number; audioBitrate: number;
+    },
+  ) => Promise<{ ok: boolean; message?: string; destinations?: string[] }>;
+  streamStop?: () => Promise<{ ok: boolean }>;
+  streamStatus?: () => Promise<StreamStatusBridge>;
+  /** One chunk of recorded WebM, forwarded to ffmpeg's stdin. */
+  streamChunk?: (bytes: ArrayBuffer) => void;
+  onStreamStatus?: (handler: (status: StreamStatusBridge) => void) => () => void;
 };
 
 declare global {

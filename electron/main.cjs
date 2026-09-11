@@ -1,6 +1,9 @@
 const { app, BrowserWindow, ipcMain, session, desktopCapturer, shell } = require('electron');
 const fs = require('fs/promises');
 const path = require('path');
+const { Streamer, ffmpegPath } = require('./streamer.cjs');
+
+let streamer;
 
 let mainWindow;
 
@@ -44,6 +47,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  streamer = new Streamer(path.join(app.getPath('userData'), 'stream.log'));
   // Grant the capture permissions the studio needs. Everything else is denied.
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
     callback(['media', 'midi', 'midiSysex', 'audioCapture', 'videoCapture'].includes(permission));
@@ -137,6 +141,19 @@ app.whenReady().then(() => {
 
   ipcMain.handle('library:paths', async () => ({ projects: projectsFolder(), recordings: recordingsFolder() }));
 
+  /* ----------------------------------------------------------- streaming */
+
+  streamer.onStatus = status => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('stream:status', status);
+  };
+
+  ipcMain.handle('stream:available', async () => Boolean(ffmpegPath()));
+  ipcMain.handle('stream:start', async (_event, targets, options) => streamer.start(targets, options));
+  ipcMain.handle('stream:stop', async () => streamer.stop());
+  ipcMain.handle('stream:status', async () => streamer.status());
+  // Chunks arrive frequently, so this is a one-way send rather than an invoke.
+  ipcMain.on('stream:chunk', (_event, bytes) => { streamer.write(bytes); });
+
   ipcMain.handle('settings:load', async () => {
     try {
       return JSON.parse(await fs.readFile(path.join(app.getPath('userData'), 'settings.json'), 'utf8'));
@@ -154,5 +171,7 @@ app.whenReady().then(() => {
   createWindow();
   app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWindow());
 });
+
+app.on('before-quit', () => { streamer.stop(); });
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

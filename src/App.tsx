@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   Circle, Library, Maximize2, Minus, MonitorPlay, Settings as SettingsIcon,
-  SlidersHorizontal, Upload, Wifi, X,
+  Radio, SlidersHorizontal, Upload, Wifi, X,
 } from 'lucide-react';
 import { StudioProvider, useStudio } from './lib/useStudio';
 import { Studio } from './pages/Studio';
@@ -9,14 +9,16 @@ import { Devices } from './pages/Devices';
 import { Mixer } from './pages/Mixer';
 import { LibraryPage } from './pages/LibraryPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { StreamPage } from './pages/StreamPage';
 import { formatDuration } from './lib/settings';
 
-type Workspace = 'Studio' | 'Devices' | 'Mixer' | 'Library' | 'Settings';
+type Workspace = 'Studio' | 'Devices' | 'Mixer' | 'Stream' | 'Library' | 'Settings';
 
 const WORKSPACES: Array<{ id: Workspace; label: string; Icon: typeof MonitorPlay }> = [
   { id: 'Studio', label: 'Tutorial', Icon: MonitorPlay },
   { id: 'Devices', label: 'Devices', Icon: Wifi },
   { id: 'Mixer', label: 'Mixer', Icon: SlidersHorizontal },
+  { id: 'Stream', label: 'Stream', Icon: Radio },
   { id: 'Library', label: 'Library', Icon: Library },
   { id: 'Settings', label: 'Settings', Icon: SettingsIcon },
 ];
@@ -79,7 +81,7 @@ function Shell() {
           savedAt: new Date().toISOString(),
         }).then(path => setNotice(path ? `Project saved to ${path}` : 'Project saved'))
           .catch(() => setNotice('Project could not be saved'));
-      } else if (key >= '1' && key <= '5') {
+      } else if (key >= '1' && key <= '6') {
         event.preventDefault();
         setWorkspace(WORKSPACES[Number(key) - 1].id);
       }
@@ -125,6 +127,7 @@ function Shell() {
       {workspace === 'Studio' && <Studio />}
       {workspace === 'Devices' && <Devices />}
       {workspace === 'Mixer' && <Mixer />}
+      {workspace === 'Stream' && <StreamPage />}
       {workspace === 'Library' && <LibraryPage />}
       {workspace === 'Settings' && <SettingsPage />}
 

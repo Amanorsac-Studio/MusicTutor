@@ -15,4 +15,14 @@ contextBridge.exposeInMainWorld('pianoTutorDesktop', {
   loadSettings: () => ipcRenderer.invoke('settings:load'),
   saveSettings: (value) => ipcRenderer.invoke('settings:save', value),
   paths: () => ipcRenderer.invoke('library:paths'),
+  streamAvailable: () => ipcRenderer.invoke('stream:available'),
+  streamStart: (targets, options) => ipcRenderer.invoke('stream:start', targets, options),
+  streamStop: () => ipcRenderer.invoke('stream:stop'),
+  streamStatus: () => ipcRenderer.invoke('stream:status'),
+  streamChunk: (bytes) => ipcRenderer.send('stream:chunk', bytes),
+  onStreamStatus: (handler) => {
+    const listener = (_event, status) => handler(status);
+    ipcRenderer.on('stream:status', listener);
+    return () => ipcRenderer.removeListener('stream:status', listener);
+  },
 });

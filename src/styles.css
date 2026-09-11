@@ -362,3 +362,24 @@ kbd{min-width:84px;text-align:center;padding:6px 9px;border:1px solid #34495b;bo
 .speed-picks button:hover{background:#173250;color:#fff}
 .speed-picks button.active{background:var(--blue);border-color:#4fb4ff;color:#fff}
 .inspector-buttons button.active{background:var(--blue);border-color:#4fb4ff;color:#fff}
+
+/* ================= Streaming ================= */
+.destination{border:1px solid #22394d;border-radius:8px;padding:12px;margin-bottom:10px;background:#0b1825}
+.destination-head{display:grid;grid-template-columns:auto 1fr 170px auto;gap:9px;align-items:center}
+.destination-name{background:#0f1e2d;border:1px solid #22394d;border-radius:6px;color:#dbe6f1;
+  padding:6px 8px;font-size:12px;font-weight:600}
+.destination-fields{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:10px}
+.destination-fields input{background:#0f1e2d;border:1px solid #22394d;border-radius:6px;color:#dbe6f1;
+  padding:6px 8px;font-size:12px;width:100%}
+.destination-fields input:disabled{color:#5d7288}
+.key-field{display:flex;gap:5px;align-items:center}
+.key-field button{border:1px solid #26405a;background:#102132;color:#8fa6bb;border-radius:6px;
+  padding:6px 8px;cursor:pointer;display:grid;place-items:center}
+.key-field button:hover{background:#173250;color:#fff}
+.destination-caveat{display:flex;gap:7px;align-items:flex-start;margin-top:9px;padding:8px 10px;
+  border-radius:6px;background:rgba(224,179,85,.1);border:1px solid rgba(224,179,85,.3);
+  color:#e6c887;font-size:10px;line-height:1.55}
+.destination-caveat.mild{background:rgba(21,156,255,.08);border-color:rgba(21,156,255,.25);color:#a8cfee}
+.destination-caveat svg{flex:0 0 auto;margin-top:1px}
+.primary.small.danger{background:#a3242c;border-color:#c0343d}
+.primary.small.danger:hover{background:#c0343d}

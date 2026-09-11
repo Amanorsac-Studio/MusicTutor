@@ -76,7 +76,8 @@ describe('workspace navigation', () => {
   it('opens every workspace', async () => {
     render(<App />);
     for (const [label, heading] of [
-      ['Devices', 'Devices'], ['Mixer', 'Mixer'], ['Library', 'Library'], ['Settings', 'Settings'],
+      ['Devices', 'Devices'], ['Mixer', 'Mixer'], ['Stream', 'Stream'],
+      ['Library', 'Library'], ['Settings', 'Settings'],
     ]) {
       fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${label}$`) }));
       expect(await screen.findByRole('heading', { name: heading, level: 1 })).toBeInTheDocument();
@@ -350,6 +351,59 @@ describe('source zoom', () => {
     fireEvent.change(zoom, { target: { value: '200' } });
     expect(await screen.findByLabelText('Pan horizontally')).toBeInTheDocument();
     expect(screen.getByLabelText('Pan vertically')).toBeInTheDocument();
+  });
+});
+
+describe('streaming', () => {
+  it('explains that streaming needs the desktop app in a browser', async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: /^Stream$/ }));
+    expect(await screen.findByText(/installed desktop app/i)).toBeInTheDocument();
+  });
+
+  it('will not go live until a destination has a key', async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: /^Stream$/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /YouTube Live/ }));
+    // A destination with no key cannot be streamed to.
+    await waitFor(() => expect(screen.getByRole('button', { name: /Go live/ })).toBeDisabled());
+    expect(screen.getByText(/No stream key entered/)).toBeInTheDocument();
+  });
+
+  it('clears the not-ready warning once a key is entered', async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: /^Stream$/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /YouTube Live/ }));
+    expect(await screen.findByText(/No stream key entered/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('YouTube Live stream key'), { target: { value: 'abcd-1234' } });
+    await waitFor(() => expect(screen.queryByText(/No stream key entered/)).not.toBeInTheDocument());
+    // Still disabled in a browser: there is no encoder outside the desktop app.
+    expect(screen.getByRole('button', { name: /Go live/ })).toBeDisabled();
+  });
+
+  it('keeps the stream key hidden until asked', async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: /^Stream$/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /YouTube Live/ }));
+    const key = await screen.findByLabelText('YouTube Live stream key');
+    expect(key).toHaveAttribute('type', 'password');
+    fireEvent.click(screen.getByRole('button', { name: /Show stream key/ }));
+    await waitFor(() => expect(screen.getByLabelText('YouTube Live stream key')).toHaveAttribute('type', 'text'));
+  });
+
+  it('is upfront about platforms that gate or withdrew RTMP', async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: /^Stream$/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Instagram Live/ }));
+    expect(await screen.findByText(/withdrew third-party RTMP/i)).toBeInTheDocument();
+  });
+
+  it('warns when the canvas shape does not suit the platform', async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: /^Stream$/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /TikTok Live/ }));
+    // The canvas defaults to landscape, which TikTok does not want.
+    expect(await screen.findByText(/expects a vertical picture/i)).toBeInTheDocument();
   });
 });
 
