@@ -9,6 +9,7 @@
 
 import { audioEngine } from './audioEngine';
 import { MidiRecorder } from './midiFile';
+import { sceneCompositor } from './compositor';
 
 export type RecordingQuality = {
   width: number;
@@ -59,7 +60,7 @@ export type RecordingResult = {
 export class LessonRecorder {
   private recorder?: MediaRecorder;
   private chunks: Blob[] = [];
-  private displayStream?: MediaStream;
+  private canvasStream?: MediaStream;
   private mixedStream?: MediaStream;
   private startedAt = 0;
   private state: RecorderState = 'idle';
@@ -79,31 +80,32 @@ export class LessonRecorder {
   }
 
   /**
-   * Begin recording. Requires the desktop shell, which supplies the capture
-   * source without a picker dialog.
+   * Begin recording the composed scene.
+   *
+   * Video comes from the scene compositor's canvas, not from a screen grab, so
+   * the file contains only the 1920x1080 composition — no panels, no toolbar,
+   * and at full resolution however small the window is.
    */
   async start(options: { quality?: RecordingQuality; recordAudio?: boolean; recordMidi?: boolean } = {}): Promise<void> {
     if (this.state !== 'idle') throw new Error('A recording is already in progress.');
     const quality = options.quality ?? QUALITY_PRESETS['1080p30'];
     const recordAudio = options.recordAudio ?? true;
 
-    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getDisplayMedia) {
-      throw new Error('Screen capture is not available in this environment.');
+    if (typeof MediaRecorder === 'undefined') {
+      throw new Error('Recording is not available in this environment.');
     }
 
     this.state = 'starting';
     try {
-      const display = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          frameRate: { ideal: quality.frameRate },
-          width: { ideal: quality.width },
-          height: { ideal: quality.height },
-        },
-        audio: false,
-      });
-      this.displayStream = display;
+      // Keep the compositor painting at the recording frame rate for the
+      // duration of the take.
+      sceneCompositor.start(quality.frameRate);
+      const canvasStream = sceneCompositor.captureStream(quality.frameRate);
+      const videoTracks = canvasStream.getVideoTracks();
+      if (!videoTracks.length) throw new Error('The scene canvas produced no video.');
+      this.canvasStream = canvasStream;
 
-      const tracks: MediaStreamTrack[] = [...display.getVideoTracks()];
+      const tracks: MediaStreamTrack[] = [...videoTracks];
 
       if (recordAudio) {
         // The engine's recording tap already carries the full program mix:
@@ -128,12 +130,6 @@ export class LessonRecorder {
       this.recorder.ondataavailable = event => {
         if (event.data && event.data.size) this.chunks.push(event.data);
       };
-      // If the user stops sharing from the OS overlay, end the recording cleanly.
-      display.getVideoTracks().forEach(track => {
-        track.addEventListener('ended', () => {
-          if (this.state === 'recording') void this.stop('Piano_Tutorial').catch(() => {});
-        });
-      });
 
       this.recorder.start(1000);
       this.startedAt = performance.now();
@@ -200,10 +196,11 @@ export class LessonRecorder {
   }
 
   private cleanup(): void {
-    this.displayStream?.getTracks().forEach(track => track.stop());
+    this.canvasStream?.getTracks().forEach(track => track.stop());
     // The mixed stream's audio tracks belong to the engine's tap and are reused
-    // by the next recording, so only the display tracks are stopped above.
-    this.displayStream = undefined;
+    // by the next recording, so only the canvas tracks are stopped above. The
+    // compositor itself keeps running to drive the live preview.
+    this.canvasStream = undefined;
     this.mixedStream = undefined;
     this.recorder = undefined;
     this.chunks = [];

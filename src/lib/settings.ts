@@ -4,6 +4,7 @@
  */
 
 import { QUALITY_PRESETS } from './recorder';
+import { normalizeScenes, type Scene } from './scene';
 
 export type AppSettings = {
   /** Key into QUALITY_PRESETS. */
@@ -136,4 +137,55 @@ export function formatDateTime(iso: string, locale: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '—';
   return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+}
+
+/* ------------------------------------------------------------------ *
+ * Scene persistence
+ *
+ * Scenes live in the same store as the preferences but are kept as their own
+ * field, so a malformed scene can never corrupt the settings and vice versa.
+ * ------------------------------------------------------------------ */
+
+const SCENES_KEY = 'pianotutor.scenes.v1';
+
+export type PersistedScenes = { scenes: Scene[]; activeSceneId?: string };
+
+async function readRawStore(): Promise<Record<string, unknown>> {
+  const desktop = window.pianoTutorDesktop;
+  if (desktop?.loadSettings) {
+    try {
+      const raw = await desktop.loadSettings();
+      if (raw && typeof raw === 'object') return raw as Record<string, unknown>;
+    } catch { /* fall through to localStorage */ }
+  }
+  try {
+    const stored = localStorage.getItem(SCENES_KEY);
+    return stored ? (JSON.parse(stored) as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+export async function loadScenes(): Promise<PersistedScenes> {
+  const raw = await readRawStore();
+  const scenes = normalizeScenes(raw.scenes);
+  const activeSceneId = typeof raw.activeSceneId === 'string' ? raw.activeSceneId : undefined;
+  return { scenes, activeSceneId: scenes.some(s => s.id === activeSceneId) ? activeSceneId : scenes[0]?.id };
+}
+
+/**
+ * Write settings and scenes together. They share one file, so both are always
+ * persisted as a unit rather than one overwriting the other.
+ */
+export async function savePersisted(settings: AppSettings, state: PersistedScenes): Promise<string | undefined> {
+  const payload = { ...settings, scenes: state.scenes, activeSceneId: state.activeSceneId };
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    localStorage.setItem(SCENES_KEY, JSON.stringify({ scenes: state.scenes, activeSceneId: state.activeSceneId }));
+  } catch { /* private mode or quota */ }
+  const desktop = window.pianoTutorDesktop;
+  if (desktop?.saveSettings) {
+    try { return await desktop.saveSettings(payload); } catch { return undefined; }
+  }
+  return undefined;
 }

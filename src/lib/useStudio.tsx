@@ -14,8 +14,13 @@ import { midiManager } from './midi';
 import { useDeviceCatalog, type DeviceCatalog } from './devices';
 import { lessonRecorder, QUALITY_PRESETS } from './recorder';
 import {
-  DEFAULT_SETTINGS, loadSettings, saveSettings, type AppSettings,
+  DEFAULT_SETTINGS, loadScenes, loadSettings, savePersisted, saveSettings, type AppSettings,
 } from './settings';
+import {
+  createId, createScene, createSource, type Scene, type Source, type SourceKind,
+} from './scene';
+import { sceneCompositor } from './compositor';
+import { detectChord, romanNumeral } from './chords';
 
 export type StudioValue = {
   settings: AppSettings;
@@ -35,6 +40,22 @@ export type StudioValue = {
   setChannelSolo: (id: string, value: boolean) => void;
   /** Choose which input channel drives the ducking sidechain. */
   setDuckingTrigger: (id: string) => void;
+
+  scenes: Scene[];
+  activeSceneId: string;
+  activeScene: Scene | undefined;
+  selectScene: (id: string) => void;
+  addScene: (name?: string) => string;
+  duplicateScene: (id: string) => void;
+  renameScene: (id: string, name: string) => void;
+  deleteScene: (id: string) => void;
+  /** Replace the source list of the active scene. */
+  setSceneSources: (sources: Source[]) => void;
+  addSource: (kind: SourceKind, overrides?: Partial<Source>) => string | null;
+  updateSource: (id: string, patch: Partial<Source>) => void;
+  removeSource: (id: string) => void;
+  selectedSourceId: string | null;
+  setSelectedSourceId: (id: string | null) => void;
 
   activeNotes: Set<number>;
   noteOn: (note: number, velocity: number) => void;
@@ -68,9 +89,17 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const [elapsedMs, setElapsedMs] = useState(0);
   const [notice, setNotice] = useState('');
 
+  const [scenes, setScenes] = useState<Scene[]>([]);
+  const [activeSceneId, setActiveSceneId] = useState('');
+  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
+
   const { catalog, refresh } = useDeviceCatalog();
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+
+  const activeScene = scenes.find(scene => scene.id === activeSceneId);
+  const activeSceneRef = useRef(activeScene);
+  activeSceneRef.current = activeScene;
 
   /* -------------------------------------------------- settings ------- */
 
@@ -88,7 +117,144 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     setSettings(current => ({ ...current, ...patch }));
   }, []);
 
-  const persistSettings = useCallback(() => saveSettings(settingsRef.current), []);
+  const persistSettings = useCallback(
+    () => savePersisted(settingsRef.current, { scenes: scenesRef.current, activeSceneId: activeSceneIdRef.current }),
+    [],
+  );
+
+  /* -------------------------------------------------- scenes --------- */
+
+  const scenesRef = useRef(scenes);
+  scenesRef.current = scenes;
+  const activeSceneIdRef = useRef(activeSceneId);
+  activeSceneIdRef.current = activeSceneId;
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadScenes().then(stored => {
+      if (cancelled) return;
+      // A fresh install gets one empty scene to work in. Creating it here rather
+      // than in a component effect avoids the new scene being wiped when this
+      // asynchronous load resolves with an empty list.
+      const scenes = stored.scenes.length ? stored.scenes : [createScene('My scene')];
+      setScenes(scenes);
+      setActiveSceneId(stored.activeSceneId ?? scenes[0]?.id ?? '');
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const selectScene = useCallback((id: string) => {
+    setActiveSceneId(id);
+    setSelectedSourceId(null);
+  }, []);
+
+  const addScene = useCallback((name?: string) => {
+    const scene = createScene(name || `Scene ${scenesRef.current.length + 1}`);
+    setScenes(current => [...current, scene]);
+    setActiveSceneId(scene.id);
+    setSelectedSourceId(null);
+    return scene.id;
+  }, []);
+
+  const duplicateScene = useCallback((id: string) => {
+    const original = scenesRef.current.find(scene => scene.id === id);
+    if (!original) return;
+    const copy: Scene = {
+      id: createId('scene'),
+      name: `${original.name} copy`,
+      // Fresh ids so the two scenes never share a source.
+      sources: original.sources.map(source => ({ ...source, id: createId(source.kind), props: { ...source.props } })),
+    };
+    setScenes(current => [...current, copy]);
+    setActiveSceneId(copy.id);
+  }, []);
+
+  const renameScene = useCallback((id: string, name: string) => {
+    setScenes(current => current.map(scene => (scene.id === id ? { ...scene, name } : scene)));
+  }, []);
+
+  const deleteScene = useCallback((id: string) => {
+    setScenes(current => {
+      const next = current.filter(scene => scene.id !== id);
+      setActiveSceneId(previous => (previous === id ? next[0]?.id ?? '' : previous));
+      return next;
+    });
+    setSelectedSourceId(null);
+  }, []);
+
+  const setSceneSources = useCallback((sources: Source[]) => {
+    setScenes(current => current.map(scene =>
+      (scene.id === activeSceneIdRef.current ? { ...scene, sources } : scene)));
+  }, []);
+
+  const addSource = useCallback((kind: SourceKind, overrides?: Partial<Source>) => {
+    if (!activeSceneIdRef.current) return null;
+    const source = createSource(kind, overrides);
+    setScenes(current => current.map(scene =>
+      (scene.id === activeSceneIdRef.current ? { ...scene, sources: [...scene.sources, source] } : scene)));
+    setSelectedSourceId(source.id);
+    return source.id;
+  }, []);
+
+  const updateSource = useCallback((id: string, patch: Partial<Source>) => {
+    setScenes(current => current.map(scene => {
+      if (scene.id !== activeSceneIdRef.current) return scene;
+      return {
+        ...scene,
+        sources: scene.sources.map(source => (source.id === id
+          ? { ...source, ...patch, props: { ...source.props, ...(patch.props ?? {}) } }
+          : source)),
+      };
+    }));
+  }, []);
+
+  const removeSource = useCallback((id: string) => {
+    setScenes(current => current.map(scene =>
+      (scene.id === activeSceneIdRef.current
+        ? { ...scene, sources: scene.sources.filter(source => source.id !== id) }
+        : scene)));
+    setSelectedSourceId(previous => (previous === id ? null : previous));
+  }, []);
+
+  // Feed the compositor from refs rather than state, so it always paints the
+  // current scene without the provider being rebuilt on every edit.
+  const activeNotesRef = useRef(activeNotes);
+  activeNotesRef.current = activeNotes;
+
+  useEffect(() => {
+    const images = new Map<string, CanvasImageSource>();
+    sceneCompositor.setProvider(() => {
+      const notes = activeNotesRef.current;
+      const chord = detectChord(notes, settingsRef.current.accidental);
+      const numeral = chord
+        ? romanNumeral(chord, settingsRef.current.keyRoot, settingsRef.current.mode)
+        : null;
+      return {
+        sources: activeSceneRef.current?.sources ?? [],
+        context: {
+          activeNotes: notes,
+          accidental: settingsRef.current.accidental,
+          chordSymbol: chord?.symbol,
+          chordNumeral: numeral ?? undefined,
+          chordQuality: chord?.quality,
+          images,
+        },
+      };
+    });
+    // Painting continuously keeps the canvas warm, so starting a recording
+    // never captures a blank first frame.
+    sceneCompositor.start(30);
+    return () => sceneCompositor.stop();
+  }, []);
+
+  // Autosave scene edits, debounced so dragging a source does not thrash disk.
+  useEffect(() => {
+    if (!settingsLoaded || !settings.autosave) return;
+    const id = window.setTimeout(() => {
+      void savePersisted(settingsRef.current, { scenes: scenesRef.current, activeSceneId: activeSceneIdRef.current });
+    }, 700);
+    return () => window.clearTimeout(id);
+  }, [scenes, activeSceneId, settingsLoaded, settings.autosave]);
 
   // Push settings that the audio engine needs to know about.
   useEffect(() => {
@@ -321,6 +487,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     settings, updateSettings, persistSettings, settingsLoaded,
     catalog, refreshDevices: refresh,
     channels, levels, attachInput, detachInput, setChannelGain, setChannelMuted, setChannelSolo, setDuckingTrigger,
+    scenes, activeSceneId, activeScene, selectScene, addScene, duplicateScene, renameScene, deleteScene,
+    setSceneSources, addSource, updateSource, removeSource, selectedSourceId, setSelectedSourceId,
     activeNotes, noteOn, noteOff, panic,
     recording, elapsedMs, startRecording, stopRecording,
     notice, setNotice,
@@ -328,6 +496,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     settings, updateSettings, persistSettings, settingsLoaded,
     catalog, refresh, channels, levels, attachInput, detachInput,
     setChannelGain, setChannelMuted, setChannelSolo, setDuckingTrigger,
+    scenes, activeSceneId, activeScene, selectScene, addScene, duplicateScene, renameScene, deleteScene,
+    setSceneSources, addSource, updateSource, removeSource, selectedSourceId,
     activeNotes, noteOn, noteOff, panic,
     recording, elapsedMs, startRecording, stopRecording, notice,
   ]);

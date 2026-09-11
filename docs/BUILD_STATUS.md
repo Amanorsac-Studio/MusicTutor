@@ -2,6 +2,15 @@
 
 Last updated: August 29, 2026
 
+## September 3 HTML redesign phase
+
+- Added a standalone visual prototype at `design-prototype/index.html`.
+- The production Electron/React source remains unchanged while the new direction is reviewed.
+- The concept includes clickable Studio, Devices, Mixer, Library, and Settings screens.
+- Studio includes a generated 88-key keyboard, scene rail, 16:9 program canvas, transport, and inspector.
+- Design direction: premium instrument hardware + broadcast console; graphite surfaces, warm ivory typography, and one amber accent.
+- Desktop render and all five navigation targets were checked in the browser with no console errors.
+
 This is the canonical status document. “Built” means code exists. “Tested” means it was exercised in the packaged Windows app. “Partial” means the interface works but the production media-engine behavior is not complete.
 
 ## Current artifacts

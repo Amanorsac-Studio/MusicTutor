@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="PianoTutor desktop app visual design prototype">
+  <title>PianoTutor — HTML design concept</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#workspace">Skip to workspace</a>
+  <div class="app-shell">
+    <header class="titlebar">
+      <a class="brand" href="#" aria-label="PianoTutor home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <span>Piano<span>Tutor</span></span>
+      </a>
+      <nav class="main-nav" aria-label="Primary navigation">
+        <button class="nav-item active" data-page="studio"><span class="nav-glyph">◫</span>Studio</button>
+        <button class="nav-item" data-page="devices"><span class="nav-glyph">⌁</span>Devices</button>
+        <button class="nav-item" data-page="mixer"><span class="nav-glyph">≡</span>Mixer</button>
+        <button class="nav-item" data-page="library"><span class="nav-glyph">▤</span>Library</button>
+        <button class="nav-item" data-page="settings"><span class="nav-glyph">○</span>Settings</button>
+      </nav>
+      <div class="window-area">
+        <span class="concept-badge">HTML concept · 01</span>
+        <span class="ready-state"><i></i>Ready</span>
+        <button aria-label="Minimize">—</button><button aria-label="Maximize">□</button><button aria-label="Close">×</button>
+      </div>
+    </header>
+
+    <main id="workspace">
+      <section class="page active" id="studio" aria-labelledby="studio-title">
+        <aside class="scene-rail">
+          <div class="rail-heading"><div><span class="kicker">Production</span><h1 id="studio-title">Lesson studio</h1></div><button class="square-button" aria-label="Add scene">＋</button></div>
+          <div class="scene-stack">
+            <button class="scene-card active" data-scene="camera"><span class="scene-preview camera-preview"></span><span><b>Welcome + keys</b><small>Camera · title · keyboard</small></span><em>01</em></button>
+            <button class="scene-card" data-scene="hands"><span class="scene-preview hands-preview"></span><span><b>Hands close-up</b><small>Overhead · chord strip</small></span><em>02</em></button>
+            <button class="scene-card" data-scene="theory"><span class="scene-preview theory-preview"></span><span><b>Theory board</b><small>Notation · picture-in-picture</small></span><em>03</em></button>
+          </div>
+          <div class="source-section">
+            <div class="rail-label"><span>Sources</span><small>4 active</small></div>
+            <button class="source-row"><span class="source-icon">●</span><span><b>Face camera</b><small>Iriun Webcam</small></span><i class="source-live"></i></button>
+            <button class="source-row"><span class="source-icon">◒</span><span><b>Hands camera</b><small>EOS Webcam Utility</small></span><i class="source-live"></i></button>
+            <button class="source-row"><span class="source-icon">⌨</span><span><b>Virtual piano</b><small>88 keys · MODX-1</small></span><i class="source-live"></i></button>
+            <button class="source-row"><span class="source-icon">T</span><span><b>Lesson title</b><small>Text overlay</small></span><i class="source-live"></i></button>
+          </div>
+          <div class="rail-footer"><span><i></i>Auto-saved</span><button>•••</button></div>
+        </aside>
+
+        <section class="stage-area">
+          <div class="stage-toolbar">
+            <div><button class="tool active">Program</button><button class="tool">Preview</button></div>
+            <div class="stage-meta"><span>1920 × 1080</span><span>30 fps</span><button>Fit ▾</button></div>
+          </div>
+          <div class="stage-wrap">
+            <div class="program-stage" data-active-scene="camera">
+              <img class="stage-image" src="../assets/references/02_tutorial_reference_multiview.jpeg" alt="Piano teacher seated in a studio">
+              <div class="stage-shade"></div>
+              <div class="lesson-overlay">
+                <span class="lesson-number">Lesson 08</span>
+                <h2>Chord<br>progressions</h2>
+                <p>I – IV – V in C major</p>
+              </div>
+              <div class="stage-brand"><span class="mini-mark"><i></i><i></i><i></i><i></i></span><b>PianoTutor</b></div>
+              <span class="live-chip"><i></i>Live</span>
+              <span class="safe-area">Safe area</span>
+            </div>
+          </div>
+          <section class="keyboard-deck" aria-label="Virtual piano keyboard">
+            <div class="keyboard-header"><div><span class="kicker">Live MIDI</span><b>MODX-1</b></div><div class="chord-readout"><small>Detected chord</small><strong>Cmaj7</strong><span>C · E · G · B</span></div><div class="keyboard-actions"><button>Scale guide</button><button>88 keys ▾</button></div></div>
+            <div class="piano" id="piano"></div>
+          </section>
+          <footer class="transport">
+            <div class="meter-cluster"><span class="meter-name">Mic</span><div class="horizontal-meter"><i style="width:64%"></i></div><b>−12.4</b></div>
+            <div class="transport-main"><button aria-label="Return to start">↶</button><button class="record-button" aria-label="Start recording"><i></i></button><span class="timecode">00:00:00:00</span><button aria-label="Add marker">◇</button></div>
+            <div class="health"><span><i></i>48 kHz</span><span><i></i>30 fps</span><span>CPU 11%</span></div>
+          </footer>
+        </section>
+
+        <aside class="inspector">
+          <div class="inspector-heading"><div><span class="kicker">Selected</span><h2>Lesson title</h2></div><button class="square-button">•••</button></div>
+          <div class="preview-tile"><span>Today’s lesson</span><b>Chord progressions</b><small>I – IV – V in C major</small></div>
+          <div class="control-group">
+            <label>Eyebrow<input value="Today’s lesson"></label>
+            <label>Headline<textarea rows="2">Chord progressions</textarea></label>
+            <label>Subtitle<input value="I – IV – V in C major"></label>
+          </div>
+          <div class="control-group compact-grid">
+            <label>Typeface<select><option>Segoe UI Variable</option><option>Bahnschrift</option></select></label>
+            <label>Weight<select><option>Semibold</option><option>Bold</option></select></label>
+            <label>Size<input type="number" value="72"></label>
+            <label>Leading<input type="number" value="88"></label>
+          </div>
+          <div class="control-group">
+            <div class="control-line"><span>Text color</span><button class="color-well"><i></i>#F4F0E8</button></div>
+            <div class="control-line"><span>Alignment</span><div class="segmented"><button class="active">Left</button><button>Center</button><button>Right</button></div></div>
+          </div>
+          <div class="control-group">
+            <div class="control-line"><span>Visible</span><button class="switch on" aria-label="Toggle visibility"><i></i></button></div>
+            <div class="control-line"><span>Lock position</span><button class="switch" aria-label="Toggle position lock"><i></i></button></div>
+          </div>
+          <button class="delete-layer">Remove layer</button>
+        </aside>
+      </section>
+
+      <section class="page workspace-page" id="devices" aria-labelledby="devices-title">
+        <header class="page-heading"><div><span class="kicker">Hardware</span><h1 id="devices-title">Devices</h1><p>See every signal, then decide where it belongs.</p></div><button class="primary-button">Scan devices</button></header>
+        <div class="device-layout">
+          <article class="hero-device"><div class="device-photo camera-photo"><span class="live-chip"><i></i>Signal active</span></div><div class="device-copy"><span class="kicker">Primary camera</span><h2>Iriun Webcam</h2><p>1920 × 1080 · 30 fps</p><div class="device-actions"><button class="primary-button">Open preview</button><button class="text-button">Configure</button></div></div></article>
+          <section class="signal-list"><div class="section-heading"><div><span class="kicker">Audio inputs</span><h2>Behringer UMC404HD</h2></div><span class="healthy"><i></i>48 kHz</span></div>
+            <div class="signal-row"><b>IN 1</b><span>Vocal microphone</span><div class="signal-meter"><i style="width:71%"></i></div><em>−10.8 dB</em><button>Assign ▾</button></div>
+            <div class="signal-row"><b>IN 2</b><span>Room microphone</span><div class="signal-meter"><i style="width:24%"></i></div><em>−31.2 dB</em><button>Assign ▾</button></div>
+            <div class="signal-row"><b>IN 3–4</b><span>Stage piano</span><div class="signal-meter"><i style="width:56%"></i></div><em>−17.6 dB</em><button>Assign ▾</button></div>
+          </section>
+          <section class="device-sidebar"><div class="section-heading"><div><span class="kicker">MIDI</span><h2>MODX-1</h2></div><span class="healthy"><i></i>Connected</span></div><div class="midi-activity"><span>C3</span><span>E3</span><span>G3</span><span>B3</span></div><p>Input channel: All<br>Output: MODX Main</p><button class="text-button">Test connection →</button></section>
+        </div>
+      </section>
+
+      <section class="page workspace-page" id="mixer" aria-labelledby="mixer-title">
+        <header class="page-heading"><div><span class="kicker">Sound</span><h1 id="mixer-title">Mixer</h1><p>Fast enough for a lesson. Precise enough for a record.</p></div><div class="preset-menu">Teaching voice <button>Preset ▾</button></div></header>
+        <div class="console" id="console"></div>
+      </section>
+
+      <section class="page workspace-page" id="library" aria-labelledby="library-title">
+        <header class="page-heading"><div><span class="kicker">Your work</span><h1 id="library-title">Library</h1><p>Lessons, recordings, and reusable production setups.</p></div><button class="primary-button">New lesson</button></header>
+        <div class="library-filters"><div class="segmented"><button class="active">Projects</button><button>Recordings</button><button>Templates</button></div><label class="search">⌕<input placeholder="Search library"></label></div>
+        <div class="featured-project"><div class="featured-image"><img src="../assets/references/01_tutorial_reference_keyboard_title.jpeg" alt="Hands playing a piano keyboard"><span>Last opened 18 min ago</span></div><div><span class="kicker">Continue editing</span><h2>Chord progressions<br>in C major</h2><p>4 scenes · 2 cameras · 18:32 recorded</p><button class="primary-button">Open project</button></div></div>
+        <div class="project-list"><div class="project-line"><span class="project-index">02</span><div><b>Major scales — C, G, D</b><small>Edited yesterday · 3 scenes</small></div><span>12:08</span><button>Open →</button></div><div class="project-line"><span class="project-index">03</span><div><b>Warmups in C major</b><small>Edited Aug 24 · 2 scenes</small></div><span>08:16</span><button>Open →</button></div></div>
+      </section>
+
+      <section class="page workspace-page" id="settings" aria-labelledby="settings-title">
+        <header class="page-heading"><div><span class="kicker">Preferences</span><h1 id="settings-title">Settings</h1><p>Make the studio fit your room and workflow.</p></div><button class="primary-button">Save changes</button></header>
+        <div class="settings-layout-new"><nav><button class="active">Recording</button><button>Audio + MIDI</button><button>Video</button><button>Storage</button><button>Keyboard</button><button>Appearance</button></nav><section class="settings-sheet-new"><div class="setting-row"><div><b>Recording format</b><small>Container and video codec</small></div><select><option>MP4 · H.264</option></select></div><div class="setting-row"><div><b>Canvas quality</b><small>Resolution and frame rate</small></div><select><option>1080p · 30 fps</option></select></div><div class="setting-row"><div><b>Keep source recordings</b><small>Save cameras, audio, and MIDI separately</small></div><button class="switch on"><i></i></button></div><div class="setting-row"><div><b>Autosave recovery</b><small>Save project state every 30 seconds</small></div><button class="switch on"><i></i></button></div><div class="storage-callout"><span>Recording location</span><b>C:\Users\amano\Videos\PianoTutor</b><button>Change folder</button></div></section></div>
+      </section>
+    </main>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -51,6 +51,10 @@ export type PianoKeyboardProps = {
   accent?: string;
   /** Show note names on every white key rather than only on C. */
   showAllLabels?: boolean;
+  /** Hide all key labels. */
+  hideLabels?: boolean;
+  /** Stretch to fill the container instead of using a fixed key height. */
+  fill?: boolean;
   compact?: boolean;
   /** Pitch classes to mark as belonging to the current key or scale. */
   highlightPitchClasses?: number[];
@@ -65,10 +69,12 @@ export function PianoKeyboard({
   active,
   onNoteOn,
   onNoteOff,
-  range = KEY_RANGES['61'],
+  range = KEY_RANGES['88'],
   accidental = 'sharp',
   accent = '#1d9cff',
   showAllLabels = false,
+  hideLabels = false,
+  fill = false,
   compact = false,
   highlightPitchClasses,
   computerKeys = false,
@@ -232,7 +238,7 @@ export function PianoKeyboard({
   return (
     <div
       ref={containerRef}
-      className={`piano-keyboard ${compact ? 'pk-compact' : ''} ${className}`}
+      className={`piano-keyboard ${compact ? 'pk-compact' : ''} ${fill ? 'pk-fill' : ''} ${className}`}
       style={{ ['--pk-accent' as string]: accent }}
       role="group"
       aria-label={`Virtual piano keyboard, ${noteLabel(range.first, accidental)} to ${noteLabel(range.last, accidental)}`}
@@ -254,11 +260,13 @@ export function PianoKeyboard({
               onContextMenu={event => event.preventDefault()}
             >
               <span className="pk-label">
-                {showAllLabels
-                  ? noteName(note, accidental)
-                  : pitchClass(note) === 0
-                    ? `C${octaveOf(note)}`
-                    : ''}
+                {hideLabels
+                  ? ''
+                  : showAllLabels
+                    ? noteName(note, accidental)
+                    : pitchClass(note) === 0
+                      ? `C${octaveOf(note)}`
+                      : ''}
               </span>
             </button>
           ))}
@@ -277,7 +285,7 @@ export function PianoKeyboard({
               onPointerLeave={handlePointerLeave(note)}
               onContextMenu={event => event.preventDefault()}
             >
-              {showAllLabels && <span className="pk-label pk-black-label">{noteName(note, accidental)}</span>}
+              {showAllLabels && !hideLabels && <span className="pk-label pk-black-label">{noteName(note, accidental)}</span>}
             </button>
           ))}
         </div>

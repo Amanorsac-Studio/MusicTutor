@@ -1,144 +1,88 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
-  AudioLines, BookOpen, Camera, Circle, Keyboard, Lock, Mic2, MonitorPlay,
-  Music2, Pause, Piano, Plus, RotateCcw, Square, Video, Volume2,
+  ArrowDown, ArrowUp, Camera, ChevronsDown, ChevronsUp, Circle, Copy, Eye, EyeOff,
+  Image as ImageIcon, Keyboard, Lock, Maximize, Mic2, Move, Music2, Piano, Plus,
+  RotateCcw, Square, Trash2, Type, Unlock, Volume2,
 } from 'lucide-react';
-import { PianoKeyboard, KEY_RANGES } from '../components/PianoKeyboard';
-import { ChordDisplay, KeySelector } from '../components/ChordDisplay';
+import { SceneCanvas } from '../components/SceneCanvas';
 import { DeviceSelect, Select } from '../components/Select';
-import { Meter, Toggle, formatDb } from '../components/common';
+import { Meter, formatDb } from '../components/common';
 import { useStudio } from '../lib/useStudio';
-import { scaleNotes, type Mode } from '../lib/chords';
+import { detectChord, romanNumeral } from '../lib/chords';
 import { formatDuration } from '../lib/settings';
+import {
+  CANVAS_HEIGHT, CANVAS_WIDTH, centreRect, fillCanvas, fitToCanvas, reorder,
+  type Source, type SourceKind,
+} from '../lib/scene';
 import { midiManager } from '../lib/midi';
+import { cameraHub } from '../lib/cameraHub';
 
-type Scene = { name: string; subtitle: string; color: string; layout: number; camera: boolean; hands: boolean; keys: boolean };
-
-const DEFAULT_SCENES: Scene[] = [
-  { name: 'Default Lesson', subtitle: 'Face + Keys + Hands', color: '#178bff', layout: 0, camera: true, hands: true, keys: true },
-  { name: 'Clean Blue', subtitle: 'Title + Hands', color: '#1568c9', layout: 1, camera: false, hands: true, keys: true },
-  { name: 'Dark Studio', subtitle: 'Face + Keys', color: '#714825', layout: 0, camera: true, hands: false, keys: true },
-  { name: 'Teaching Board', subtitle: 'Board + Face + VMK', color: '#386478', layout: 2, camera: true, hands: true, keys: true },
+const SOURCE_KINDS: Array<{ kind: SourceKind; label: string; Icon: typeof Camera }> = [
+  { kind: 'camera', label: 'Camera', Icon: Camera },
+  { kind: 'keyboard', label: 'Piano keyboard', Icon: Piano },
+  { kind: 'text', label: 'Text', Icon: Type },
+  { kind: 'chord', label: 'Chord readout', Icon: Music2 },
+  { kind: 'image', label: 'Image', Icon: ImageIcon },
+  { kind: 'color', label: 'Colour block', Icon: Square },
 ];
-
-const BACKGROUNDS = ['studio', 'blue', 'wood', 'room', 'violet', 'mountain'];
 
 export function Studio() {
   const {
     settings, updateSettings, catalog, activeNotes, noteOn, noteOff, panic, levels,
     channels, attachInput, detachInput,
     recording, elapsedMs, startRecording, stopRecording,
+    scenes, activeScene, activeSceneId, selectScene, addScene, duplicateScene,
+    renameScene, deleteScene, setSceneSources, addSource, updateSource, removeSource,
+    selectedSourceId, setSelectedSourceId,
   } = useStudio();
 
-  const [scenes, setScenes] = useState(DEFAULT_SCENES);
-  const [sceneIndex, setSceneIndex] = useState(0);
-  const [cameraOn, setCameraOn] = useState(true);
-  const [handsOn, setHandsOn] = useState(true);
-  const [keysOn, setKeysOn] = useState(true);
-  const [layout, setLayout] = useState(0);
-  const [background, setBackground] = useState(0);
-  const [title, setTitle] = useState("Today's Lesson");
-  const [headline, setHeadline] = useState('Chord Progressions');
-  const [subtitle, setSubtitle] = useState('I – IV – V in C Major');
-  const [accent, setAccent] = useState('#1d9cff');
-  const [cameraId, setCameraId] = useState('');
-  const [cameraError, setCameraError] = useState('');
   const [midiInputId, setMidiInputId] = useState('');
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
 
   const micChannel = channels.find(channel => channel.id === 'mic1');
+  const selected = activeScene?.sources.find(source => source.id === selectedSourceId) ?? null;
 
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
+  const chord = useMemo(
+    () => detectChord(activeNotes, settings.accidental),
+    [activeNotes, settings.accidental],
+  );
+  const numeral = chord ? romanNumeral(chord, settings.keyRoot, settings.mode) : null;
 
-  const cameraIds = catalog.videoInputs.map(device => device.id).join('|');
-  const selectedCameraId = cameraId || catalog.videoInputs[0]?.id || '';
+  const midiStatusLabel = catalog.midi.state === 'denied'
+    ? 'MIDI permission blocked'
+    : catalog.midi.state === 'unsupported'
+      ? 'Web MIDI unavailable'
+      : catalog.midiInputs.length ? 'All MIDI inputs' : 'Computer keyboard';
 
-  // Live camera preview. Re-opens when the selection or device list changes.
-  useEffect(() => {
-    let cancelled = false;
-    const stop = () => {
-      streamRef.current?.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    };
-    if (!cameraOn || !selectedCameraId) {
-      stop();
+  const layerAction = (direction: 'up' | 'down' | 'top' | 'bottom') => {
+    if (!selected || !activeScene) return;
+    setSceneSources(reorder(activeScene.sources, selected.id, direction));
+  };
+
+  const addSourceOfKind = (kind: SourceKind) => {
+    setAddMenuOpen(false);
+    // A new camera picks the first device that is not already on the canvas.
+    if (kind === 'camera') {
+      const used = new Set(activeScene?.sources.filter(s => s.kind === 'camera').map(s => s.props.deviceId));
+      const free = catalog.videoInputs.find(device => !used.has(device.id)) ?? catalog.videoInputs[0];
+      addSource('camera', {
+        name: free?.name ?? 'Camera',
+        props: { deviceId: free?.id },
+      });
       return;
     }
-    void (async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { deviceId: { exact: selectedCameraId }, width: { ideal: 1920 }, height: { ideal: 1080 } },
-          audio: false,
-        });
-        if (cancelled) {
-          stream.getTracks().forEach(track => track.stop());
-          return;
-        }
-        stop();
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play().catch(() => {});
-        }
-        setCameraError('');
-      } catch (error) {
-        if (!cancelled) setCameraError(error instanceof Error ? error.message : 'Camera unavailable');
-      }
-    })();
-    return () => { cancelled = true; stop(); };
-  }, [cameraOn, selectedCameraId, cameraIds]);
-
-  const applyScene = (index: number) => {
-    const scene = scenes[index];
-    if (!scene) return;
-    setSceneIndex(index);
-    setCameraOn(scene.camera);
-    setHandsOn(scene.hands);
-    setKeysOn(scene.keys);
-    setLayout(scene.layout);
+    addSource(kind);
   };
-
-  const applyLayout = (index: number) => {
-    setLayout(index);
-    if (index === 0) { setCameraOn(true); setHandsOn(true); setKeysOn(true); }
-    else if (index === 1) { setCameraOn(false); setHandsOn(true); setKeysOn(true); }
-    else { setCameraOn(true); setHandsOn(false); setKeysOn(true); }
-  };
-
-  const scaleHighlight = useMemo(
-    () => (settings.highlightScale ? scaleNotes(settings.keyRoot, settings.mode) : undefined),
-    [settings.highlightScale, settings.keyRoot, settings.mode],
-  );
-
-  const midiInputName = catalog.midiInputs[0]?.name;
-  const midiStatusLabel = catalog.midi.state === 'ready' && midiInputName
-    ? midiInputName
-    : catalog.midi.state === 'denied'
-      ? 'MIDI permission blocked'
-      : catalog.midi.state === 'unsupported'
-        ? 'Web MIDI unavailable'
-        : 'Computer keyboard';
 
   return (
     <main className="studio-grid">
+      {/* ---------------------------------------------------------- left */}
       <aside className="side left-panel">
         <div className="panel-heading io-heading"><span>Inputs &amp; outputs</span></div>
         <div className="quick-io">
           <label>
-            <Camera size={17} />
-            <span>Camera
-              <DeviceSelect
-                devices={catalog.videoInputs}
-                value={selectedCameraId}
-                onChange={setCameraId}
-                label="Camera"
-                emptyLabel="No cameras found"
-              />
-            </span>
-          </label>
-          <label>
-            <Mic2 size={17} />
-            <span>Audio input
+            <Mic2 size={16} />
+            <span>Microphone
               <DeviceSelect
                 devices={catalog.audioInputs}
                 value={micChannel?.deviceId ?? ''}
@@ -146,7 +90,7 @@ export function Studio() {
                   if (!value) detachInput('mic1');
                   else void attachInput({ id: 'mic1', label: 'Mic 1', deviceId: value, isVoice: true });
                 }}
-                label="Audio input"
+                label="Microphone"
                 emptyLabel="No microphones found"
                 allowNone
                 noneLabel="Not assigned"
@@ -154,7 +98,7 @@ export function Studio() {
             </span>
           </label>
           <label>
-            <Volume2 size={17} />
+            <Volume2 size={16} />
             <span>Audio output
               <DeviceSelect
                 devices={catalog.audioOutputs}
@@ -166,25 +110,24 @@ export function Studio() {
             </span>
           </label>
           <label>
-            <Keyboard size={17} />
+            <Keyboard size={16} />
             <span>MIDI input
               <Select
                 label="MIDI input"
                 value={midiInputId}
                 onChange={value => {
                   setMidiInputId(value);
-                  // An empty value means "listen to every connected port".
                   midiManager.setEnabledInputs(value ? [value] : undefined);
                 }}
                 options={[
-                  { value: '', label: catalog.midiInputs.length ? 'All MIDI inputs' : midiStatusLabel },
+                  { value: '', label: midiStatusLabel },
                   ...catalog.midiInputs.map(port => ({ value: port.id, label: port.name })),
                 ]}
               />
             </span>
           </label>
           <label>
-            <Piano size={17} />
+            <Piano size={16} />
             <span>MIDI output
               <Select
                 label="MIDI output"
@@ -200,142 +143,123 @@ export function Studio() {
         </div>
 
         <hr />
+
+        {/* Scenes */}
         <div className="panel-heading">
           <span>Scenes</span>
-          <button
-            aria-label="Add scene"
-            onClick={() => {
-              setScenes(current => [...current, {
-                name: `Custom Scene ${current.length + 1}`, subtitle: 'Editable layout',
-                color: '#176a9e', layout: 0, camera: true, hands: true, keys: true,
-              }]);
-              setSceneIndex(scenes.length);
-            }}
-          ><Plus size={17} /></button>
+          <button aria-label="Add scene" onClick={() => addScene()}><Plus size={16} /></button>
         </div>
         <div className="scene-list">
-          {scenes.map((scene, index) => (
+          {scenes.map(scene => (
             <div
-              key={`${scene.name}-${index}`}
+              key={scene.id}
+              className={`scene-row ${scene.id === activeSceneId ? 'selected' : ''}`}
+              onClick={() => selectScene(scene.id)}
               role="button"
               tabIndex={0}
-              className={`scene ${sceneIndex === index ? 'selected' : ''}`}
-              onClick={() => applyScene(index)}
-              onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') applyScene(index); }}
+              onKeyDown={event => { if (event.key === 'Enter') selectScene(scene.id); }}
             >
-              <span className="scene-thumb" style={{ background: `linear-gradient(140deg,${scene.color},#06101b)` }}>
-                <MonitorPlay size={16} />
+              <input
+                aria-label={`Scene name: ${scene.name}`}
+                value={scene.name}
+                onClick={event => event.stopPropagation()}
+                onChange={event => renameScene(scene.id, event.target.value)}
+              />
+              <small>{scene.sources.length} source{scene.sources.length === 1 ? '' : 's'}</small>
+              <span className="scene-row-actions">
+                <button
+                  aria-label={`Duplicate ${scene.name}`}
+                  onClick={event => { event.stopPropagation(); duplicateScene(scene.id); }}
+                ><Copy size={13} /></button>
+                <button
+                  aria-label={`Delete ${scene.name}`}
+                  onClick={event => { event.stopPropagation(); deleteScene(scene.id); }}
+                ><Trash2 size={13} /></button>
               </span>
-              <span>
-                <input
-                  aria-label={`Scene ${index + 1} name`}
-                  className="scene-name"
-                  value={scene.name}
-                  onClick={event => event.stopPropagation()}
-                  onChange={event => setScenes(current =>
-                    current.map((item, i) => (i === index ? { ...item, name: event.target.value } : item)))}
-                />
-                <small>{scene.subtitle}</small>
-              </span>
-              <button
-                aria-label={`Delete ${scene.name}`}
-                className="dots"
-                onClick={event => {
-                  event.stopPropagation();
-                  if (scenes.length <= 1) return;
-                  setScenes(current => current.filter((_, i) => i !== index));
-                  setSceneIndex(0);
-                }}
-              >×</button>
             </div>
           ))}
+          {!scenes.length && <p className="panel-hint">Create a scene to begin.</p>}
         </div>
 
         <hr />
-        <div className="panel-heading"><span>Sources</span></div>
-        <div className="source-list">
-          {([[Camera, 'Face camera', cameraOn, setCameraOn],
-            [Video, 'Hands camera', handsOn, setHandsOn],
-            [Piano, 'Virtual keyboard', keysOn, setKeysOn]] as const).map(([Icon, label, value, setValue]) => (
-            <button
-              key={label}
-              className={`source ${value ? 'on' : 'off'}`}
-              onClick={() => setValue(!value)}
-              aria-pressed={value}
+
+        {/* Sources (layers) */}
+        <div className="panel-heading">
+          <span>Sources</span>
+          <button
+            aria-label="Add source"
+            disabled={!activeScene}
+            onClick={() => setAddMenuOpen(open => !open)}
+          ><Plus size={16} /></button>
+        </div>
+        {addMenuOpen && (
+          <div className="add-source-menu">
+            {SOURCE_KINDS.map(({ kind, label, Icon }) => (
+              <button key={kind} onClick={() => addSourceOfKind(kind)}>
+                <Icon size={14} />{label}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="source-layers">
+          {/* Topmost layer first, the way a layer list reads. */}
+          {[...(activeScene?.sources ?? [])].reverse().map(source => (
+            <div
+              key={source.id}
+              className={`layer-row ${source.id === selectedSourceId ? 'selected' : ''}`}
+              onClick={() => setSelectedSourceId(source.id)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={event => { if (event.key === 'Enter') setSelectedSourceId(source.id); }}
             >
-              <Icon size={16} /><span>{label}</span>
-              <Circle size={9} fill={value ? '#39dfa0' : '#3b4d60'} color={value ? '#39dfa0' : '#3b4d60'} />
-            </button>
+              <button
+                className="layer-toggle"
+                aria-label={`${source.visible ? 'Hide' : 'Show'} ${source.name}`}
+                aria-pressed={source.visible}
+                onClick={event => { event.stopPropagation(); updateSource(source.id, { visible: !source.visible }); }}
+              >{source.visible ? <Eye size={13} /> : <EyeOff size={13} />}</button>
+              <span className="layer-name">{source.name}</span>
+              <button
+                className="layer-toggle"
+                aria-label={`${source.locked ? 'Unlock' : 'Lock'} ${source.name}`}
+                aria-pressed={source.locked}
+                onClick={event => { event.stopPropagation(); updateSource(source.id, { locked: !source.locked }); }}
+              >{source.locked ? <Lock size={13} /> : <Unlock size={13} />}</button>
+            </div>
           ))}
-          <button className="source locked" disabled><BookOpen size={16} /><span>Lesson title</span><Lock size={13} /></button>
-        </div>
-
-        <hr />
-        <label className="section-label">Background</label>
-        <div className="background-picks">
-          {BACKGROUNDS.map((name, index) => (
-            <button
-              key={name}
-              onClick={() => setBackground(index)}
-              aria-label={`${name} background`}
-              aria-pressed={background === index}
-              className={background === index ? 'selected' : ''}
-            ><span className={`bg-${name}`} /></button>
-          ))}
+          {activeScene && !activeScene.sources.length && (
+            <p className="panel-hint">No sources yet. Use + to add a camera, the keyboard, or text.</p>
+          )}
         </div>
       </aside>
 
+      {/* -------------------------------------------------------- centre */}
       <section className="studio-center">
         <div className="canvas-shell">
           <div className="canvas-topline">
-            <span><Circle size={8} fill="#39dfa0" color="#39dfa0" /> LIVE PREVIEW</span>
-            <span>1920 × 1080 · 30 FPS</span>
+            <span>
+              <Circle size={8} fill={recording ? '#ff4c55' : '#39dfa0'} color={recording ? '#ff4c55' : '#39dfa0'} />
+              {recording ? ' RECORDING' : ' LIVE PREVIEW'}
+            </span>
+            <span>{CANVAS_WIDTH} × {CANVAS_HEIGHT} · this frame is what gets recorded</span>
           </div>
-          <div className={`composition bg-${BACKGROUNDS[background]} layout-${layout}`}>
-            <div className="lesson-card"><span className="mark">▮▮▮▮</span><small>LEARN · PLAY · GROW</small></div>
-            {cameraOn && (
-              <div className="face-camera">
-                <video ref={videoRef} muted playsInline />
-                {(!selectedCameraId || cameraError) && (
-                  <span className="camera-fallback"><Camera size={26} /><small>{cameraError || 'No camera connected'}</small></span>
-                )}
-              </div>
-            )}
-            <div className="lesson-copy">
-              <span>{title}</span>
-              <strong>{headline}</strong>
-              <p>{subtitle}</p>
-            </div>
-            {keysOn && (
-              <div className="vmk">
-                <PianoKeyboard
-                  active={activeNotes}
-                  onNoteOn={noteOn}
-                  onNoteOff={noteOff}
-                  range={KEY_RANGES[settings.keyboardSize] ?? KEY_RANGES['61']}
-                  accidental={settings.accidental}
-                  accent={accent}
-                  showAllLabels={settings.showAllLabels}
-                  highlightPitchClasses={scaleHighlight}
-                  computerKeys
-                  computerKeyOctave={settings.computerKeyOctave}
-                  compact
-                />
-                <ChordDisplay
-                  notes={activeNotes}
-                  accidental={settings.accidental}
-                  keyRoot={settings.keyRoot}
-                  mode={settings.mode}
-                  compact
-                />
-              </div>
-            )}
-            {handsOn && (
-              <div className="hands-camera">
-                <img src="./assets/references/01_tutorial_reference_keyboard_title.jpeg" alt="Overhead keyboard view" />
-              </div>
-            )}
-          </div>
+
+          {activeScene ? (
+            <SceneCanvas
+              scene={activeScene}
+              selectedId={selectedSourceId}
+              onSelect={setSelectedSourceId}
+              onChange={setSceneSources}
+              activeNotes={activeNotes}
+              onNoteOn={noteOn}
+              onNoteOff={noteOff}
+              accidental={settings.accidental}
+              chordSymbol={chord?.symbol}
+              chordNumeral={numeral ?? undefined}
+            />
+          ) : (
+            <div className="scene-canvas"><div className="scene-empty"><b>No scene selected</b></div></div>
+          )}
         </div>
 
         <div className="transport">
@@ -349,13 +273,13 @@ export function Studio() {
             <button title="All notes off" aria-label="All notes off" onClick={panic}><RotateCcw size={17} /></button>
             <button
               className={`record ${recording ? 'active' : ''}`}
-              onClick={() => (recording ? void stopRecording(headline.replace(/\s+/g, '_')) : void startRecording())}
-              title={recording ? 'Stop recording' : 'Start recording'}
+              onClick={() => (recording
+                ? void stopRecording((activeScene?.name ?? 'Lesson').replace(/\s+/g, '_'))
+                : void startRecording())}
               aria-label={recording ? 'Stop recording' : 'Start recording'}
             >
               {recording ? <Square size={18} fill="white" /> : <Circle size={25} fill="currentColor" />}
             </button>
-            <button title="Sustain" aria-label="Sustain" onClick={() => { /* reserved for pedal UI */ }}><Pause size={18} /></button>
           </div>
           <div className="health">
             <span className="transport-meter">
@@ -364,112 +288,278 @@ export function Studio() {
               <b>{formatDb(levels.master?.rms)}</b>
             </span>
             <span><Music2 size={13} /> {activeNotes.size} note{activeNotes.size === 1 ? '' : 's'}</span>
-            <span><i /> {midiStatusLabel}</span>
           </div>
         </div>
       </section>
 
+      {/* --------------------------------------------------------- right */}
       <aside className="side right-panel">
-        <div className="inspector-title"><span>Inspector</span></div>
-
-        <label className="section-label">Layout</label>
-        <div className="layout-picks">
-          {['Face + Keys', 'Top Logo', 'Split View'].map((name, index) => (
-            <button
-              key={name}
-              onClick={() => applyLayout(index)}
-              className={layout === index ? 'selected' : ''}
-              aria-pressed={layout === index}
-            ><span className={`layout-icon l${index}`} /><small>{name}</small></button>
-          ))}
-        </div>
-
-        <hr />
-        <label className="section-label">Visible layers</label>
-        <div className="settings-list">
-          <span><Camera size={15} />Face camera<Toggle value={cameraOn} onChange={setCameraOn} label="Face camera" /></span>
-          <span><Video size={15} />Hands camera<Toggle value={handsOn} onChange={setHandsOn} label="Hands camera" /></span>
-          <span><Piano size={15} />Virtual keyboard<Toggle value={keysOn} onChange={setKeysOn} label="Virtual keyboard" /></span>
-        </div>
-
-        <hr />
-        <label className="section-label">Lesson text</label>
-        <input className="text-input" aria-label="Lesson label" value={title} onChange={event => setTitle(event.target.value)} />
-        <input className="text-input" aria-label="Lesson headline" value={headline} onChange={event => setHeadline(event.target.value)} />
-        <input className="text-input" aria-label="Lesson subtitle" value={subtitle} onChange={event => setSubtitle(event.target.value)} />
-
-        <hr />
-        <label className="section-label">Keyboard</label>
-        <div className="field-row">
-          <span>Size</span>
-          <Select
-            label="Keyboard size"
-            value={settings.keyboardSize}
-            onChange={value => updateSettings({ keyboardSize: value as typeof settings.keyboardSize })}
-            options={Object.keys(KEY_RANGES).map(size => ({ value: size, label: `${size} keys` }))}
+        <div className="inspector-title"><span>{selected ? 'Source properties' : 'Inspector'}</span></div>
+        {selected ? (
+          <SourceInspector
+            source={selected}
+            cameras={catalog.videoInputs}
+            onChange={patch => updateSource(selected.id, patch)}
+            onRemove={() => removeSource(selected.id)}
+            onLayer={layerAction}
           />
-        </div>
-        <div className="field-row">
-          <span>Note names</span>
-          <Select
-            label="Accidental spelling"
-            value={settings.accidental}
-            onChange={value => updateSettings({ accidental: value as 'sharp' | 'flat' })}
-            options={[{ value: 'sharp', label: 'Sharps (C#)' }, { value: 'flat', label: 'Flats (Db)' }]}
-          />
-        </div>
-        <div className="settings-list">
-          <span><Keyboard size={15} />Label every key
-            <Toggle value={settings.showAllLabels} onChange={value => updateSettings({ showAllLabels: value })} label="Label every key" />
-          </span>
-          <span><Music2 size={15} />Highlight key notes
-            <Toggle value={settings.highlightScale} onChange={value => updateSettings({ highlightScale: value })} label="Highlight key notes" />
-          </span>
-        </div>
-
-        <hr />
-        <label className="section-label">Chord analysis</label>
-        <KeySelector
-          keyRoot={settings.keyRoot}
-          mode={settings.mode}
-          onKeyRoot={value => updateSettings({ keyRoot: value })}
-          onMode={(value: Mode) => updateSettings({ mode: value })}
-        />
-        <ChordDisplay notes={activeNotes} accidental={settings.accidental} keyRoot={settings.keyRoot} mode={settings.mode} />
-
-        <hr />
-        <label className="section-label">Keyboard highlight</label>
-        <div className="color-picks">
-          {['#ffffff', '#1d9cff', '#7746e9', '#39b77b', '#ffb12b', '#ff4c55'].map(color => (
-            <button
-              key={color}
-              aria-label={`Highlight ${color}`}
-              aria-pressed={accent === color}
-              onClick={() => setAccent(color)}
-              className={accent === color ? 'selected' : ''}
-              style={{ background: color }}
-            />
-          ))}
-        </div>
-
-        <hr />
-        <label className="section-label">Recording</label>
-        <div className="settings-list">
-          <span><AudioLines size={15} />Record audio
-            <Toggle value={settings.recordAudio} onChange={value => updateSettings({ recordAudio: value })} label="Record audio" />
-          </span>
-          <span><Keyboard size={15} />Record MIDI
-            <Toggle value={settings.recordMidi} onChange={value => updateSettings({ recordMidi: value })} label="Record MIDI" />
-          </span>
-        </div>
-        <button
-          className="primary-action"
-          onClick={() => (recording ? void stopRecording(headline.replace(/\s+/g, '_')) : void startRecording())}
-        >
-          {recording ? <Square size={16} fill="white" /> : <Circle size={16} fill="#ff4c55" color="#ff4c55" />}
-          {recording ? 'Stop recording' : 'Start recording'}
-        </button>
+        ) : (
+          <p className="panel-hint">
+            Select a source on the canvas to move, resize and style it.
+            Drag to move, pull the handles to resize, hold Shift to keep the shape,
+            hold Alt to ignore the guides, and use the arrow keys to nudge.
+          </p>
+        )}
       </aside>
     </main>
   );
 }
+
+/* ------------------------------------------------------------------ *
+ * Inspector
+ * ------------------------------------------------------------------ */
+
+function SourceInspector({
+  source, cameras, onChange, onRemove, onLayer,
+}: {
+  source: Source;
+  cameras: Array<{ id: string; name: string }>;
+  onChange: (patch: Partial<Source>) => void;
+  onRemove: () => void;
+  onLayer: (direction: 'up' | 'down' | 'top' | 'bottom') => void;
+}) {
+  const number = (label: string, key: 'x' | 'y' | 'width' | 'height') => (
+    <label className="inspector-field">
+      <span>{label}</span>
+      <input
+        type="number"
+        aria-label={`${source.name} ${label}`}
+        value={Math.round(source[key])}
+        onChange={event => onChange({ [key]: Number(event.target.value) } as Partial<Source>)}
+      />
+    </label>
+  );
+
+  const prop = <K extends keyof Source['props']>(key: K, value: Source['props'][K]) =>
+    onChange({ props: { [key]: value } as Source['props'] });
+
+  return (
+    <div className="inspector">
+      <label className="inspector-field wide">
+        <span>Name</span>
+        <input
+          aria-label="Source name"
+          value={source.name}
+          onChange={event => onChange({ name: event.target.value })}
+        />
+      </label>
+
+      <label className="section-label">Position &amp; size</label>
+      <div className="inspector-grid">
+        {number('X', 'x')}
+        {number('Y', 'y')}
+        {number('W', 'width')}
+        {number('H', 'height')}
+      </div>
+      <div className="inspector-buttons">
+        <button onClick={() => onChange(fillCanvas())}><Maximize size={13} />Fill screen</button>
+        <button onClick={() => onChange(centreRect(source))}><Move size={13} />Centre</button>
+        <button onClick={() => onChange(fitToCanvas(source.width / source.height))}>Fit</button>
+      </div>
+
+      <label className="section-label">Layer order</label>
+      <div className="inspector-buttons">
+        <button aria-label="Bring to front" onClick={() => onLayer('top')}><ChevronsUp size={13} /></button>
+        <button aria-label="Bring forward" onClick={() => onLayer('up')}><ArrowUp size={13} /></button>
+        <button aria-label="Send backward" onClick={() => onLayer('down')}><ArrowDown size={13} /></button>
+        <button aria-label="Send to back" onClick={() => onLayer('bottom')}><ChevronsDown size={13} /></button>
+      </div>
+
+      <label className="inspector-field wide">
+        <span>Opacity {Math.round(source.opacity * 100)}%</span>
+        <input
+          type="range" min={0} max={100}
+          aria-label="Opacity"
+          value={Math.round(source.opacity * 100)}
+          onChange={event => onChange({ opacity: Number(event.target.value) / 100 })}
+        />
+      </label>
+
+      <hr />
+
+      {source.kind === 'camera' && (
+        <>
+          <label className="section-label">Camera</label>
+          <DeviceSelect
+            devices={cameras}
+            value={source.props.deviceId ?? ''}
+            onChange={value => prop('deviceId', value)}
+            label="Camera device"
+            emptyLabel="No cameras found"
+          />
+          <div className="inspector-field wide">
+            <span>Fill mode</span>
+            <Select
+              label="Camera fill mode"
+              value={source.props.fit ?? 'cover'}
+              onChange={value => prop('fit', value as 'cover' | 'contain' | 'stretch')}
+              options={[
+                { value: 'cover', label: 'Crop to fill' },
+                { value: 'contain', label: 'Fit inside' },
+                { value: 'stretch', label: 'Stretch' },
+              ]}
+            />
+          </div>
+          <label className="inspector-check">
+            <input
+              type="checkbox"
+              checked={Boolean(source.props.mirror)}
+              onChange={event => prop('mirror', event.target.checked)}
+            />
+            Mirror horizontally
+          </label>
+        </>
+      )}
+
+      {source.kind === 'keyboard' && (
+        <>
+          <label className="section-label">Keyboard</label>
+          <div className="inspector-field wide">
+            <span>Range</span>
+            <Select
+              label="Keyboard range"
+              value={`${source.props.firstNote ?? 21}-${source.props.lastNote ?? 108}`}
+              onChange={value => {
+                const [first, last] = value.split('-').map(Number);
+                onChange({ props: { firstNote: first, lastNote: last } });
+              }}
+              options={[
+                { value: '21-108', label: '88 keys · A0 – C8' },
+                { value: '28-103', label: '76 keys · E1 – G7' },
+                { value: '36-96', label: '61 keys · C2 – C7' },
+                { value: '36-84', label: '49 keys · C2 – C6' },
+                { value: '48-84', label: '37 keys · C3 – C6' },
+                { value: '48-72', label: '25 keys · C3 – C5' },
+              ]}
+            />
+          </div>
+          <div className="inspector-field wide">
+            <span>Key labels</span>
+            <Select
+              label="Key labels"
+              value={source.props.showLabels ?? 'c-only'}
+              onChange={value => prop('showLabels', value as 'none' | 'c-only' | 'all')}
+              options={[
+                { value: 'none', label: 'None' },
+                { value: 'c-only', label: 'C notes only' },
+                { value: 'all', label: 'Every key' },
+              ]}
+            />
+          </div>
+          <label className="inspector-field wide">
+            <span>Highlight colour</span>
+            <input
+              type="color"
+              aria-label="Highlight colour"
+              value={source.props.accent ?? '#1d9cff'}
+              onChange={event => prop('accent', event.target.value)}
+            />
+          </label>
+        </>
+      )}
+
+      {(source.kind === 'text' || source.kind === 'chord') && (
+        <>
+          <label className="section-label">{source.kind === 'text' ? 'Text' : 'Chord readout'}</label>
+          {source.kind === 'text' && (
+            <label className="inspector-field wide">
+              <span>Content</span>
+              <textarea
+                aria-label="Text content"
+                rows={3}
+                value={source.props.text ?? ''}
+                onChange={event => prop('text', event.target.value)}
+              />
+            </label>
+          )}
+          <label className="inspector-field wide">
+            <span>Size {source.props.fontSize ?? 72} px</span>
+            <input
+              type="range" min={16} max={220}
+              aria-label="Font size"
+              value={source.props.fontSize ?? 72}
+              onChange={event => prop('fontSize', Number(event.target.value))}
+            />
+          </label>
+          <div className="inspector-field wide">
+            <span>Align</span>
+            <Select
+              label="Text alignment"
+              value={source.props.align ?? 'left'}
+              onChange={value => prop('align', value as 'left' | 'center' | 'right')}
+              options={[
+                { value: 'left', label: 'Left' },
+                { value: 'center', label: 'Centre' },
+                { value: 'right', label: 'Right' },
+              ]}
+            />
+          </div>
+          <label className="inspector-field wide">
+            <span>Colour</span>
+            <input
+              type="color"
+              aria-label="Text colour"
+              value={source.props.color ?? '#ffffff'}
+              onChange={event => prop('color', event.target.value)}
+            />
+          </label>
+          {source.kind === 'chord' && (
+            <label className="inspector-check">
+              <input
+                type="checkbox"
+                checked={source.props.showRoman !== false}
+                onChange={event => prop('showRoman', event.target.checked)}
+              />
+              Show Roman numeral
+            </label>
+          )}
+        </>
+      )}
+
+      {source.kind === 'color' && (
+        <label className="inspector-field wide">
+          <span>Colour</span>
+          <input
+            type="color"
+            aria-label="Block colour"
+            value={source.props.background ?? '#0b1a2b'}
+            onChange={event => prop('background', event.target.value)}
+          />
+        </label>
+      )}
+
+      {source.kind === 'image' && (
+        <label className="inspector-field wide">
+          <span>Image file</span>
+          <input
+            type="file"
+            accept="image/*"
+            aria-label="Choose image"
+            onChange={event => {
+              const file = event.target.files?.[0];
+              if (!file) return;
+              const reader = new FileReader();
+              // Stored inline so the scene stays self-contained when reloaded.
+              reader.onload = () => prop('src', String(reader.result));
+              reader.readAsDataURL(file);
+            }}
+          />
+        </label>
+      )}
+
+      <hr />
+      <button className="danger-action" onClick={onRemove}><Trash2 size={14} />Remove source</button>
+    </div>
+  );
+}
+

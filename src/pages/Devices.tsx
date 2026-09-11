@@ -7,6 +7,7 @@ import { Meter, Toggle, formatDb } from '../components/common';
 import { useStudio } from '../lib/useStudio';
 import { audioEngine } from '../lib/audioEngine';
 import { midiManager } from '../lib/midi';
+import { cameraHub } from '../lib/cameraHub';
 
 /** The four mixer inputs a lesson setup normally uses. */
 const INPUT_SLOTS = [
@@ -19,69 +20,16 @@ const INPUT_SLOTS = [
 export function Devices() {
   const {
     catalog, refreshDevices, channels, levels, attachInput, detachInput, settings, updateSettings,
+    addSource, activeScene, setNotice,
   } = useStudio();
 
   const [permission, setPermission] = useState<'idle' | 'pending' | 'ready' | 'blocked'>('idle');
   const [routes, setRoutes] = useState<Record<string, string>>({});
-  const [camera2On, setCamera2On] = useState(false);
-  const [camera1Id, setCamera1Id] = useState('');
-  const [camera2Id, setCamera2Id] = useState('');
-  const [cameraError, setCameraError] = useState('');
-  const [cameraFormat, setCameraFormat] = useState('1080p30');
   const [midiInputId, setMidiInputId] = useState('');
-
-  /** Re-negotiate the live camera track rather than only relabelling the menu. */
-  const applyCameraFormat = async (format: string) => {
-    const track = stream1.current?.getVideoTracks()[0];
-    if (!track) return;
-    const [width, height, frameRate] = format === '720p30'
-      ? [1280, 720, 30]
-      : format === '1080p60' ? [1920, 1080, 60] : [1920, 1080, 30];
-    try {
-      await track.applyConstraints({ width: { ideal: width }, height: { ideal: height }, frameRate: { ideal: frameRate } });
-      setCameraError('');
-    } catch (error) {
-      setCameraError(error instanceof Error ? `Camera rejected that format: ${error.message}` : 'Format not supported');
-    }
-  };
-
-  const video1 = useRef<HTMLVideoElement>(null);
-  const video2 = useRef<HTMLVideoElement>(null);
-  const stream1 = useRef<MediaStream | null>(null);
-  const stream2 = useRef<MediaStream | null>(null);
-
-  const selected1 = camera1Id || catalog.videoInputs[0]?.id || '';
-  const selected2 = camera2Id || catalog.videoInputs[1]?.id || catalog.videoInputs[0]?.id || '';
-
-  useEffect(() => () => {
-    stream1.current?.getTracks().forEach(track => track.stop());
-    stream2.current?.getTracks().forEach(track => track.stop());
-  }, []);
-
-  const openCamera = async (
-    deviceId: string,
-    element: HTMLVideoElement | null,
-    slot: React.MutableRefObject<MediaStream | null>,
-  ) => {
-    slot.current?.getTracks().forEach(track => track.stop());
-    slot.current = null;
-    if (!deviceId || !element) return;
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: deviceId } }, audio: false });
-      slot.current = stream;
-      element.srcObject = stream;
-      await element.play().catch(() => {});
-      setCameraError('');
-    } catch (error) {
-      setCameraError(error instanceof Error ? error.message : 'Camera could not be opened');
-    }
-  };
 
   const connect = async () => {
     setPermission('pending');
     await refreshDevices(true);
-    await openCamera(selected1, video1.current, stream1);
-    // catalog.media reflects whether the permission prompt succeeded.
     setPermission(catalog.media.state === 'denied' ? 'blocked' : 'ready');
   };
 
@@ -89,14 +37,15 @@ export function Devices() {
     if (catalog.media.state === 'denied') setPermission('blocked');
   }, [catalog.media.state]);
 
-  const toggleCamera2 = async (next: boolean) => {
-    setCamera2On(next);
-    if (!next) {
-      stream2.current?.getTracks().forEach(track => track.stop());
-      stream2.current = null;
-      return;
-    }
-    await openCamera(selected2, video2.current, stream2);
+  /**
+   * Put a camera straight onto the current scene. This is the link between the
+   * two pages: a camera connected here becomes a source you can position in the
+   * Tutorial workspace.
+   */
+  const addCameraToScene = (deviceId: string, name: string) => {
+    const id = addSource('camera', { name, props: { deviceId } });
+    if (id) setNotice(`${name} added to "${activeScene?.name ?? 'the scene'}" — arrange it in the Tutorial tab.`);
+    else setNotice('Create a scene in the Tutorial tab first.');
   };
 
   const assignInput = async (slotId: string, deviceId: string, label: string, isVoice: boolean) => {
@@ -131,57 +80,11 @@ export function Devices() {
       )}
 
       <div className="page-grid devices-grid">
-        <section className="content-card camera-card">
-          <div className="card-title">
-            <div><Camera /><span><b>Camera 1</b><small>Face camera</small></span></div>
-            <span className={`status ${stream1.current ? '' : 'offline'}`}>{stream1.current ? 'ACTIVE' : 'OFFLINE'}</span>
-          </div>
-          <div className="video-preview">
-            <video ref={video1} muted playsInline />
-            {!stream1.current && (
-              <span className="preview-placeholder"><Camera size={38} /><small>Connect to preview</small></span>
-            )}
-          </div>
-          <div className="two-fields">
-            <DeviceSelect
-              devices={catalog.videoInputs}
-              value={selected1}
-              onChange={value => { setCamera1Id(value); void openCamera(value, video1.current, stream1); }}
-              label="Camera 1 device"
-              emptyLabel="No cameras found"
-            />
-            <Select
-              label="Camera 1 format"
-              value={cameraFormat}
-              onChange={value => { setCameraFormat(value); void applyCameraFormat(value); }}
-              options={[
-                { value: '720p30', label: '1280 × 720 · 30 fps' },
-                { value: '1080p30', label: '1920 × 1080 · 30 fps' },
-                { value: '1080p60', label: '1920 × 1080 · 60 fps' },
-              ]}
-            />
-          </div>
-        </section>
-
-        <section className="content-card camera-card">
-          <div className="card-title">
-            <div><Camera /><span><b>Camera 2</b><small>Hands camera</small></span></div>
-            <Toggle value={camera2On} onChange={value => void toggleCamera2(value)} label="Camera 2" disabled={!catalog.videoInputs.length} />
-          </div>
-          <div className="video-preview">
-            <video ref={video2} muted playsInline />
-            {!camera2On && (
-              <span className="preview-placeholder"><Plus /><small>Select a second camera</small></span>
-            )}
-          </div>
-          <DeviceSelect
-            devices={catalog.videoInputs}
-            value={selected2}
-            onChange={value => { setCamera2Id(value); if (camera2On) void openCamera(value, video2.current, stream2); }}
-            label="Camera 2 device"
-            emptyLabel="No cameras found"
-          />
-        </section>
+        <CameraCards
+          cameras={catalog.videoInputs}
+          onAddToScene={addCameraToScene}
+          sceneName={activeScene?.name}
+        />
 
         <section className="content-card span-two">
           <div className="card-title">
@@ -310,12 +213,121 @@ export function Devices() {
         </section>
       </div>
 
-      {(permission === 'blocked' || cameraError) && (
+      {permission === 'blocked' && (
         <div className="toast error">
           <X />
-          {cameraError || 'Camera or microphone access was blocked. Allow access in Windows privacy settings, then reconnect.'}
+          Camera or microphone access was blocked. Allow access in Windows privacy settings, then reconnect.
         </div>
       )}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Cameras
+ * ------------------------------------------------------------------ */
+
+/** One card per detected camera, each previewing through the shared hub. */
+function CameraCards({
+  cameras, onAddToScene, sceneName,
+}: {
+  cameras: Array<{ id: string; name: string }>;
+  onAddToScene: (deviceId: string, name: string) => void;
+  sceneName?: string;
+}) {
+  if (!cameras.length) {
+    return (
+      <section className="content-card span-two">
+        <div className="card-title">
+          <div><Camera /><span><b>Cameras</b><small>None detected</small></span></div>
+        </div>
+        <p className="panel-hint">
+          Connect a camera, then press “Connect devices” above to grant access and list it here.
+        </p>
+      </section>
+    );
+  }
+  return (
+    <>
+      {cameras.map(camera => (
+        <CameraCard key={camera.id} camera={camera} onAddToScene={onAddToScene} sceneName={sceneName} />
+      ))}
+    </>
+  );
+}
+
+function CameraCard({
+  camera, onAddToScene, sceneName,
+}: {
+  camera: { id: string; name: string };
+  onAddToScene: (deviceId: string, name: string) => void;
+  sceneName?: string;
+}) {
+  const holderRef = useRef<HTMLDivElement>(null);
+  const [live, setLive] = useState(false);
+  const [error, setError] = useState('');
+  const [format, setFormat] = useState('1080p30');
+
+  const open = async () => {
+    const element = await cameraHub.acquire(camera.id, camera.name);
+    const failure = cameraHub.errorFor(camera.id);
+    if (failure) { setError(failure); setLive(false); return; }
+    const view = document.createElement('video');
+    view.muted = true; view.playsInline = true; view.autoplay = true;
+    view.srcObject = element.srcObject;
+    view.className = 'source-video';
+    holderRef.current?.replaceChildren(view);
+    await view.play().catch(() => {});
+    setError('');
+    setLive(true);
+  };
+
+  const close = () => {
+    holderRef.current?.replaceChildren();
+    cameraHub.release(camera.id);
+    setLive(false);
+  };
+
+  useEffect(() => () => { if (live) cameraHub.release(camera.id); }, [live, camera.id]);
+
+  const applyFormat = async (next: string) => {
+    setFormat(next);
+    const [width, height, frameRate] = next === '720p30'
+      ? [1280, 720, 30]
+      : next === '1080p60' ? [1920, 1080, 60] : [1920, 1080, 30];
+    const failure = await cameraHub.applyFormat(camera.id, width, height, frameRate);
+    if (failure) setError(failure);
+  };
+
+  return (
+    <section className="content-card camera-card">
+      <div className="card-title">
+        <div><Camera /><span><b>{camera.name}</b><small>{error || (live ? 'Live' : 'Not started')}</small></span></div>
+        <Toggle value={live} onChange={next => (next ? void open() : close())} label={`Preview ${camera.name}`} />
+      </div>
+      <div className="video-preview" ref={holderRef}>
+        {!live && (
+          <span className="preview-placeholder"><Camera size={34} /><small>Turn on to preview</small></span>
+        )}
+      </div>
+      <div className="two-fields">
+        <Select
+          label={`${camera.name} format`}
+          value={format}
+          onChange={value => void applyFormat(value)}
+          options={[
+            { value: '720p30', label: '1280 × 720 · 30 fps' },
+            { value: '1080p30', label: '1920 × 1080 · 30 fps' },
+            { value: '1080p60', label: '1920 × 1080 · 60 fps' },
+          ]}
+        />
+        <button className="primary small" onClick={() => onAddToScene(camera.id, camera.name)}>
+          <Plus size={14} />Add to scene
+        </button>
+      </div>
+      <small className="field-hint">
+        {sceneName ? `Adds a camera source to “${sceneName}”, ready to position in the Tutorial tab.` : 'Create a scene first.'}
+      </small>
+    </section>
   );
 }

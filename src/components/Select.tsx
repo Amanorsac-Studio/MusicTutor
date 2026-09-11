@@ -34,8 +34,10 @@ export function Select({
         {isEmpty ? (
           <option value="__empty__">{emptyLabel}</option>
         ) : (
-          options.map(option => (
-            <option key={option.value} value={option.value} disabled={option.disabled}>
+          // Keyed by position: before capture permission is granted the browser
+          // reports every device with an empty id, so values are not unique.
+          options.map((option, index) => (
+            <option key={`${option.value}-${index}`} value={option.value} disabled={option.disabled}>
               {option.label}
             </option>
           ))
@@ -59,14 +61,18 @@ export function DeviceSelect({
   noneLabel?: string;
 }) {
   const options: SelectOption[] = devices.map(device => ({ value: device.id, label: device.name }));
-  if (allowNone && options.length) options.unshift({ value: '', label: noneLabel });
+  // A distinct sentinel, because an unpermitted device also reports an empty id
+  // and would otherwise be indistinguishable from "not assigned".
+  if (allowNone && options.length) options.unshift({ value: NONE_VALUE, label: noneLabel });
   return (
     <Select
-      value={value}
+      value={allowNone && !value ? NONE_VALUE : value}
       options={options}
-      onChange={onChange}
+      onChange={next => onChange(next === NONE_VALUE ? '' : next)}
       label={label}
       emptyLabel={emptyLabel}
     />
   );
 }
+
+const NONE_VALUE = '__none__';
