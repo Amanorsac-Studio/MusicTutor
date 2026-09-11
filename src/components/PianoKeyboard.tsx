@@ -53,6 +53,8 @@ export type PianoKeyboardProps = {
   showAllLabels?: boolean;
   /** Hide all key labels. */
   hideLabels?: boolean;
+  /** Name each sounding note above its key, as a teaching callout. */
+  namePlayed?: boolean;
   /** Stretch to fill the container instead of using a fixed key height. */
   fill?: boolean;
   compact?: boolean;
@@ -74,6 +76,7 @@ export function PianoKeyboard({
   accent = '#1d9cff',
   showAllLabels = false,
   hideLabels = false,
+  namePlayed = false,
   fill = false,
   compact = false,
   highlightPitchClasses,
@@ -243,6 +246,22 @@ export function PianoKeyboard({
       role="group"
       aria-label={`Virtual piano keyboard, ${noteLabel(range.first, accidental)} to ${noteLabel(range.last, accidental)}`}
     >
+      {namePlayed && (
+        <div className="pk-callouts" aria-hidden="true">
+          {[...active].sort((a, b) => a - b).map(note => {
+            // Position the name over the key it belongs to.
+            const left = isBlackKey(note)
+              ? blackKeyLeft(note) + (whiteWidth * 0.62) / 2
+              : ((whiteIndexOf.get(note) ?? 0) + 0.5) * whiteWidth;
+            if (note < range.first || note > range.last) return null;
+            return (
+              <span key={note} className="pk-callout" style={{ left: `${left}%` }}>
+                {noteName(note, accidental)}
+              </span>
+            );
+          })}
+        </div>
+      )}
       <div className="pk-felt" aria-hidden="true" />
       <div className="pk-keys">
         <div className="pk-white-row">

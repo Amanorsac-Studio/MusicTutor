@@ -7,7 +7,7 @@ import type { ProjectSummary, RecordingSummary } from '../types/desktop';
 type Tab = 'Projects' | 'Recordings';
 
 export function LibraryPage() {
-  const { settings, setNotice } = useStudio();
+  const { settings, setNotice, saveProjectFile, openProjectFile, scenes } = useStudio();
   const [tab, setTab] = useState<Tab>('Projects');
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [recordings, setRecordings] = useState<RecordingSummary[]>([]);
@@ -35,23 +35,16 @@ export function LibraryPage() {
 
   useEffect(() => { void refresh(); }, [refresh]);
 
-  const createProject = async () => {
-    const api = window.pianoTutorDesktop;
-    if (!api) {
-      setNotice('Projects are saved by the installed desktop app.');
-      return;
-    }
+  /** Save the current set-up — every scene, layout and preference. */
+  const saveCurrent = async () => {
     const stamp = new Intl.DateTimeFormat(settings.locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date());
-    const filePath = await api.saveProject({
-      name: `Untitled Lesson ${stamp}`,
-      scene: 'Default Lesson',
-      keyRoot: settings.keyRoot,
-      mode: settings.mode,
-      createdAt: new Date().toISOString(),
-    }).catch(() => undefined);
-    setNotice(filePath ? `Project created at ${filePath}` : 'Project could not be created');
+    await saveProjectFile(`Lesson ${stamp}`);
     await refresh();
     setTab('Projects');
+  };
+
+  const openProject = async (filePath: string) => {
+    await openProjectFile(filePath);
   };
 
   const open = (target: string) => { void window.pianoTutorDesktop?.openPath(target); };
@@ -65,9 +58,14 @@ export function LibraryPage() {
         <div>
           <span className="eyebrow">YOUR WORK</span>
           <h1>Library</h1>
-          <p>Projects and recordings saved on this PC.</p>
+          <p>
+            A <b>project</b> is your set-up — every scene and layout, saved so you can
+            reopen it. A <b>recording</b> is the video and MIDI a lesson produced.
+          </p>
         </div>
-        <button className="primary small" onClick={() => void createProject()}><Plus />New project</button>
+        <button className="primary small" onClick={() => void saveCurrent()}>
+          <Plus />Save current set-up
+        </button>
       </header>
 
       <div className="library-toolbar">
@@ -98,13 +96,17 @@ export function LibraryPage() {
             <article className="project-tile" key={project.filePath}>
               <div className={`project-cover cover-${index % 3}`}>
                 <span className="mini-keys" />
-                <button aria-label={`Open ${project.name}`} onClick={() => open(project.filePath)}><FolderOpen /></button>
-                <small>PROJECT</small>
+                <button
+                  aria-label={`Open ${project.name}`}
+                  title="Load these scenes into the studio"
+                  onClick={() => void openProject(project.filePath)}
+                ><FolderOpen /></button>
+                <small>SET-UP</small>
               </div>
               <div>
                 <b>{project.name}</b>
                 <p>{formatDateTime(project.savedAt, settings.locale)} · {project.scene}</p>
-                <span>Saved locally</span>
+                <span>Click to load</span>
               </div>
             </article>
           ))}
@@ -136,7 +138,7 @@ export function LibraryPage() {
           <b>No {tab.toLowerCase()} yet</b>
           <small>
             {tab === 'Projects'
-              ? 'Create your first lesson project.'
+              ? `Save your current set-up (${scenes.length} scene${scenes.length === 1 ? '' : 's'}) to reopen it later.`
               : 'Record a lesson in the Tutorial workspace and it will appear here.'}
           </small>
         </div>

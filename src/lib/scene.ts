@@ -70,6 +70,8 @@ export type SourceProps = {
   lastNote?: number;
   accent?: string;
   showLabels?: 'none' | 'c-only' | 'all';
+  /** Name each sounding note above the key, as in a lesson video. */
+  namePlayed?: boolean;
   /** chord: what to show and how prominently. */
   chordMode?: ChordDisplayMode;
   /** chord: relative size of the Roman numeral against the chord name, 0.2..3. */
@@ -150,7 +152,7 @@ function sourceDefaults(kind: SourceKind, canvas: CanvasSize): { name: string; r
           x: margin, y: Math.round(ch - margin - ch * 0.24),
           width: cw - margin * 2, height: Math.round(ch * 0.24),
         },
-        props: { firstNote: 21, lastNote: 108, accent: '#1d9cff', showLabels: 'c-only', radius: 12 },
+        props: { firstNote: 21, lastNote: 108, accent: '#ffa629', showLabels: 'c-only', namePlayed: true, radius: 12 },
       };
     case 'text':
       return {

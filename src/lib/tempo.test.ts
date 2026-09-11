@@ -40,18 +40,32 @@ describe('onset envelope', () => {
 });
 
 describe('tempo detection', () => {
-  it('finds common tempos on a click track', () => {
-    for (const bpm of [90, 120, 140]) {
-      const result = detectTempo(clickTrack(bpm, 12), 22050);
-      // Half and double time are musically valid readings of the same pulse.
-      const ratio = result.bpm / bpm;
-      const acceptable = [0.5, 1, 2].some(factor => Math.abs(ratio - factor) < 0.06);
-      expect(acceptable, `detected ${result.bpm} for a ${bpm} bpm track`).toBe(true);
+  it('reads the actual tempo, not half or double it, across the usual range', () => {
+    // Autocorrelation alone cannot separate a tempo from half of it. Weighting
+    // toward the range music sits in is what makes these land correctly.
+    for (const bpm of [65, 80, 90, 100, 110, 120, 128, 140, 150, 170]) {
+      const result = detectTempo(clickTrack(bpm, 16, 44100), 44100);
+      const error = Math.abs((result.bpm - bpm) / bpm) * 100;
+      expect(error, `detected ${result.bpm} for a ${bpm} bpm track`).toBeLessThan(1);
     }
   });
 
+  it('is accurate to a fraction of a percent, not a whole frame of lag', () => {
+    // Whole-frame lags quantise the answer; the peak is interpolated to fix it.
+    const result = detectTempo(clickTrack(120, 16, 44100), 44100);
+    expect(Math.abs(result.bpm - 120)).toBeLessThan(1);
+  });
+
+  it('offers the other reading when a fast tempo is heard as half-time', () => {
+    // 180 against 90 is a real musical ambiguity, so rather than pretend, the
+    // alternative is always one click away.
+    const result = detectTempo(clickTrack(180, 16, 44100), 44100);
+    const candidates = [result.bpm, ...result.alternatives];
+    expect(candidates.some(bpm => Math.abs(bpm - 180) < 3)).toBe(true);
+  });
+
   it('is confident about a steady pulse', () => {
-    expect(detectTempo(clickTrack(120, 12), 22050).confidence).toBeGreaterThan(0.3);
+    expect(detectTempo(clickTrack(120, 16, 44100), 44100).confidence).toBeGreaterThan(0.3);
   });
 
   it('is not confident about noise', () => {
@@ -61,11 +75,13 @@ describe('tempo detection', () => {
   });
 
   it('offers half and double time as alternatives', () => {
-    const result = detectTempo(clickTrack(120, 12), 22050);
+    const result = detectTempo(clickTrack(120, 16, 44100), 44100);
     expect(result.alternatives.length).toBeGreaterThan(0);
+    // Alternatives are manual corrections, so they are not held to the
+    // detection range — 60 and 240 are both reasonable things to want.
     result.alternatives.forEach(bpm => {
-      expect(bpm).toBeGreaterThanOrEqual(60);
-      expect(bpm).toBeLessThanOrEqual(200);
+      expect(bpm).toBeGreaterThanOrEqual(40);
+      expect(bpm).toBeLessThanOrEqual(250);
     });
   });
 

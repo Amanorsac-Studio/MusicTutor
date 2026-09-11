@@ -124,9 +124,11 @@ export function drawKeyboard(
   options: {
     firstNote: number; lastNote: number; active: Set<number>;
     accent: string; accidental: Accidental; showLabels: 'none' | 'c-only' | 'all';
+    /** Name each sounding note above the key, as a teaching callout. */
+    namePlayed?: boolean;
   },
 ): void {
-  const { firstNote, lastNote, active, accent, accidental, showLabels } = options;
+  const { firstNote, lastNote, active, accent, accidental, showLabels, namePlayed } = options;
   const whites: number[] = [];
   const blacks: number[] = [];
   for (let note = firstNote; note <= lastNote; note++) {
@@ -135,17 +137,19 @@ export function drawKeyboard(
   }
   if (!whites.length) return;
 
+  // A callout strip above the keys, when note names are being shown.
+  const calloutHeight = namePlayed ? box.height * 0.16 : 0;
   const feltHeight = Math.max(3, box.height * 0.045);
-  const keyTop = feltHeight;
-  const keyHeight = box.height - feltHeight;
+  const keyTop = calloutHeight + feltHeight;
+  const keyHeight = box.height - keyTop;
   const whiteWidth = box.width / whites.length;
 
   // Felt strip along the top, as on a real instrument.
-  const felt = ctx.createLinearGradient(0, 0, 0, feltHeight);
+  const felt = ctx.createLinearGradient(0, calloutHeight, 0, calloutHeight + feltHeight);
   felt.addColorStop(0, '#8d1f2d');
   felt.addColorStop(1, '#5c1220');
   ctx.fillStyle = felt;
-  ctx.fillRect(0, 0, box.width, feltHeight);
+  ctx.fillRect(0, calloutHeight, box.width, feltHeight);
 
   // White keys
   whites.forEach((note, index) => {
@@ -199,6 +203,33 @@ export function drawKeyboard(
     }
     roundedPath(ctx, x, keyTop, blackWidth, blackHeight, Math.min(4, blackWidth / 4));
     ctx.fill();
+  });
+
+  if (!namePlayed || !active.size) return;
+
+  // Name each sounding note above its key. Drawn last so nothing covers it.
+  const centreOf = (note: number): number | null => {
+    if (!isBlackKey(note)) {
+      const index = whites.indexOf(note);
+      return index < 0 ? null : (index + 0.5) * whiteWidth;
+    }
+    let below = note - 1;
+    while (below >= firstNote && isBlackKey(below)) below--;
+    const whiteIndex = whites.indexOf(below);
+    if (whiteIndex < 0) return null;
+    return (whiteIndex + 1 + (nudge[pitchClass(note)] ?? 0)) * whiteWidth;
+  };
+
+  const fontSize = Math.min(calloutHeight * 0.78, box.width * 0.05);
+  ctx.font = `700 ${fontSize}px Inter, system-ui, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  [...active].sort((a, b) => a - b).forEach(note => {
+    const centre = centreOf(note);
+    if (centre === null) return;
+    ctx.fillStyle = accent;
+    ctx.fillText(noteName(note, accidental), centre, calloutHeight * 0.5);
   });
 }
 
@@ -344,6 +375,7 @@ function drawSource(ctx: CanvasRenderingContext2D, source: Source, context: Rend
         accent: props.accent ?? '#1d9cff',
         accidental: context.accidental,
         showLabels: props.showLabels ?? 'c-only',
+        namePlayed: props.namePlayed !== false,
       });
       break;
     }

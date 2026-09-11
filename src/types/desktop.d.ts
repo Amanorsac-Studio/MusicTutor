@@ -31,6 +31,8 @@ export type DesktopBridge = {
   saveMidi?: (bytes: ArrayBuffer, name: string) => Promise<string>;
   saveProject: (project: unknown) => Promise<string>;
   listProjects: () => Promise<ProjectSummary[]>;
+  /** Read a saved project back. Restricted to the projects folder. */
+  readProject?: (filePath: string) => Promise<Record<string, unknown>>;
   listRecordings: () => Promise<RecordingSummary[]>;
   openPath: (target: string) => Promise<string>;
   openLibraryFolder: (kind: 'projects' | 'recordings') => Promise<string>;

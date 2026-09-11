@@ -640,9 +640,17 @@ function SourceInspector({
             <input
               type="color"
               aria-label="Highlight colour"
-              value={source.props.accent ?? '#1d9cff'}
+              value={source.props.accent ?? '#ffa629'}
               onChange={event => prop('accent', event.target.value)}
             />
+          </label>
+          <label className="inspector-check">
+            <input
+              type="checkbox"
+              checked={source.props.namePlayed !== false}
+              onChange={event => prop('namePlayed', event.target.checked)}
+            />
+            Name the notes being played
           </label>
         </>
       )}

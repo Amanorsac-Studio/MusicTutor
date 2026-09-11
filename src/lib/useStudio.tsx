@@ -14,10 +14,10 @@ import { midiManager } from './midi';
 import { useDeviceCatalog, type DeviceCatalog } from './devices';
 import { lessonRecorder, QUALITY_PRESETS } from './recorder';
 import {
-  DEFAULT_SETTINGS, loadScenes, loadSettings, savePersisted, saveSettings, type AppSettings,
+  DEFAULT_SETTINGS, loadScenes, loadSettings, normalizeSettings, savePersisted, saveSettings, type AppSettings,
 } from './settings';
 import {
-  createId, createScene, createSource, layoutFor, rescaleLayout, reorderBy, withLayout,
+  createId, createScene, createSource, layoutFor, normalizeScenes, rescaleLayout, reorderBy, withLayout,
   type Scene, type Source, type SourceKind,
 } from './scene';
 import {
@@ -67,6 +67,9 @@ export type StudioValue = {
   deleteScene: (id: string) => void;
   /** Replace the source list of the active scene. */
   setSceneSources: (sources: Source[]) => void;
+  /** Save every scene and preference as a reopenable project file. */
+  saveProjectFile: (name: string) => Promise<string | undefined>;
+  openProjectFile: (filePath: string) => Promise<void>;
   addSource: (kind: SourceKind, overrides?: Partial<Source>) => string | null;
   updateSource: (id: string, patch: Partial<Source>) => void;
   removeSource: (id: string) => void;
@@ -225,6 +228,59 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       // The list reads top-down, so "up" means earlier.
       return reorderBy(current, index, direction === 'up' ? 'down' : 'up');
     });
+  }, []);
+
+  /**
+   * Save the whole setup as a project file: every scene, every format's layout,
+   * and the preferences that go with them.
+   *
+   * This is what distinguishes a project from a recording. A recording is the
+   * finished video; a project is the arrangement that produced it, so the same
+   * lesson set-up can be reopened next week.
+   */
+  const saveProjectFile = useCallback(async (name: string) => {
+    const desktop = window.pianoTutorDesktop;
+    if (!desktop?.saveProject) {
+      setNotice('Projects are saved by the installed desktop app.');
+      return undefined;
+    }
+    const path = await desktop.saveProject({
+      name,
+      kind: 'pianotutor-project',
+      version: 2,
+      scenes: scenesRef.current,
+      activeSceneId: activeSceneIdRef.current,
+      settings: settingsRef.current,
+      scene: scenesRef.current.find(item => item.id === activeSceneIdRef.current)?.name ?? 'Scene',
+    }).catch(() => undefined);
+    setNotice(path ? `Saved “${name}” to ${path}` : 'The project could not be saved');
+    return path;
+  }, []);
+
+  /** Reopen a saved setup, replacing the current scenes and preferences. */
+  const openProjectFile = useCallback(async (filePath: string) => {
+    const desktop = window.pianoTutorDesktop;
+    if (!desktop?.readProject) {
+      setNotice('Opening projects needs the installed desktop app.');
+      return;
+    }
+    try {
+      const raw = await desktop.readProject(filePath);
+      const restored = normalizeScenes((raw as { scenes?: unknown }).scenes);
+      if (!restored.length) {
+        setNotice('That project has no scenes in it.');
+        return;
+      }
+      setScenes(restored);
+      const wanted = (raw as { activeSceneId?: string }).activeSceneId;
+      setActiveSceneId(restored.some(item => item.id === wanted) ? wanted! : restored[0].id);
+      setSelectedSourceId(null);
+      const storedSettings = (raw as { settings?: unknown }).settings;
+      if (storedSettings) setSettings(normalizeSettings(storedSettings));
+      setNotice(`Opened “${(raw as { name?: string }).name ?? 'project'}”`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'That project could not be opened.');
+    }
   }, []);
 
   const setFormat = useCallback((id: OutputFormatId) => {
@@ -580,7 +636,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     format, setFormat, canvasSize, seedLayoutFrom,
     scenes, activeSceneId, activeScene, sources, reorderScene,
     selectScene, addScene, duplicateScene, renameScene, deleteScene,
-    setSceneSources, addSource, updateSource, removeSource, selectedSourceId, setSelectedSourceId,
+    setSceneSources, saveProjectFile, openProjectFile,
+    addSource, updateSource, removeSource, selectedSourceId, setSelectedSourceId,
     activeNotes, noteOn, noteOff, panic,
     recording, elapsedMs, startRecording, stopRecording,
     notice, setNotice,
@@ -591,7 +648,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     format, setFormat, canvasSize, seedLayoutFrom,
     scenes, activeSceneId, activeScene, sources, reorderScene,
     selectScene, addScene, duplicateScene, renameScene, deleteScene,
-    setSceneSources, addSource, updateSource, removeSource, selectedSourceId,
+    setSceneSources, saveProjectFile, openProjectFile,
+    addSource, updateSource, removeSource, selectedSourceId,
     activeNotes, noteOn, noteOff, panic,
     recording, elapsedMs, startRecording, stopRecording, notice,
   ]);

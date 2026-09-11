@@ -49,6 +49,8 @@ export class TrackPlayer {
 
   /** Scheduled grains, so a stop can cancel everything cleanly. */
   private grains: AudioBufferSourceNode[] = [];
+  /** Straight playback node, used whenever the speed is normal. */
+  private direct?: AudioBufferSourceNode;
   private scheduleTimer = 0;
   private metronomeTimer = 0;
 
@@ -184,8 +186,14 @@ export class TrackPlayer {
     this.startedAtTrackTime = Math.max(start, Math.min(from ?? this.position, end - 0.02));
     this.startedAtContextTime = ctx.currentTime;
     this.playing = true;
-    this.scheduleAhead();
-    this.scheduleTimer = window.setInterval(() => this.scheduleAhead(), 60);
+
+    if (this.usesGranular) {
+      this.scheduleAhead();
+      this.scheduleTimer = window.setInterval(() => this.scheduleAhead(), 60);
+    } else {
+      this.playDirect(this.startedAtTrackTime);
+    }
+
     if (this.metronomeOn) this.restartMetronome();
     this.notify();
   }
@@ -265,6 +273,8 @@ export class TrackPlayer {
     const { ctx, gain } = this.nodes();
     const horizon = ctx.currentTime + 0.3;
     const { start, end } = this.bounds();
+    // Synthesis hop. Grains are twice this long, so consecutive grains overlap
+    // by half.
     const step = GRAIN_SECONDS * (1 - GRAIN_OVERLAP);
 
     if (this.nextGrainAt < ctx.currentTime) this.nextGrainAt = ctx.currentTime + 0.02;
@@ -282,13 +292,14 @@ export class TrackPlayer {
       const source = ctx.createBufferSource();
       source.buffer = this.buffer;
 
-      // A short fade at each end, so overlapping grains cross-fade rather than
-      // click. Without this the seams are clearly audible.
+      // A triangular window: up over the first half, down over the second, with
+      // no flat top. At 50% overlap a pair of these sums to exactly one. A
+      // window with a flat top does not — overlapping pairs exceed unity and
+      // modulate the amplitude at the grain rate, which is audible as a wobble.
       const envelope = ctx.createGain();
-      const fade = GRAIN_SECONDS * GRAIN_OVERLAP * 0.5;
+      const half = GRAIN_SECONDS / 2;
       envelope.gain.setValueAtTime(0, this.nextGrainAt);
-      envelope.gain.linearRampToValueAtTime(1, this.nextGrainAt + fade);
-      envelope.gain.setValueAtTime(1, this.nextGrainAt + GRAIN_SECONDS - fade);
+      envelope.gain.linearRampToValueAtTime(1, this.nextGrainAt + half);
       envelope.gain.linearRampToValueAtTime(0, this.nextGrainAt + GRAIN_SECONDS);
 
       source.connect(envelope);
@@ -308,7 +319,53 @@ export class TrackPlayer {
     }
   }
 
+  /**
+   * Play the buffer straight through, untouched.
+   *
+   * At normal speed there is nothing to stretch, so the track must not go
+   * anywhere near the granular path: chopping audio into grains and overlapping
+   * them can only degrade it. This is what a loaded track does by default.
+   */
+  private playDirect(from: number): void {
+    if (!this.buffer) return;
+    const { ctx, gain } = this.nodes();
+    const { start, end } = this.bounds();
+
+    const source = ctx.createBufferSource();
+    source.buffer = this.buffer;
+    if (this.looping) {
+      source.loop = true;
+      source.loopStart = start;
+      source.loopEnd = end;
+    }
+    source.connect(gain);
+    source.onended = () => {
+      if (this.direct === source) {
+        this.direct = undefined;
+        // A non-looping track that reached the end simply stops.
+        if (this.playing && !this.looping) this.pause();
+      }
+    };
+    try {
+      source.start(ctx.currentTime, Math.max(0, Math.min(from, end - 0.01)));
+    } catch {
+      return;
+    }
+    this.direct = source;
+  }
+
+  private get usesGranular(): boolean {
+    return Math.abs(this.speed - 1) > 0.005;
+  }
+
   private stopGrains(): void {
+    if (this.direct) {
+      const node = this.direct;
+      this.direct = undefined;
+      node.onended = null;
+      try { node.stop(); } catch { /* already stopped */ }
+      try { node.disconnect(); } catch { /* already gone */ }
+    }
     this.grains.forEach(source => {
       try { source.stop(); } catch { /* already stopped */ }
       try { source.disconnect(); } catch { /* already gone */ }

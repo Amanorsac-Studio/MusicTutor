@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('pianoTutorDesktop', {
   saveMidi: (bytes, name) => ipcRenderer.invoke('midi:save', bytes, name),
   saveProject: (project) => ipcRenderer.invoke('project:save', project),
   listProjects: () => ipcRenderer.invoke('project:list'),
+  readProject: (filePath) => ipcRenderer.invoke('project:read', filePath),
   listRecordings: () => ipcRenderer.invoke('recording:list'),
   openPath: (target) => ipcRenderer.invoke('path:open', target),
   openLibraryFolder: (kind) => ipcRenderer.invoke('library:open-folder', kind),

@@ -156,8 +156,7 @@ kbd{min-width:84px;text-align:center;padding:6px 9px;border:1px solid #34495b;bo
    The preview claims 1920 x 1080, so it must actually be 16:9 — otherwise
    what the teacher arranges is not what gets recorded. */
 .canvas-shell{display:flex;flex-direction:column}
-.canvas-shell .composition{flex:0 1 auto;aspect-ratio:16/9;width:100%;max-height:100%;margin:0 auto;
-  grid-template-rows:42% 26% 32%}
+
 .composition .vmk{display:flex;flex-direction:column;gap:5px;min-height:0;overflow:hidden;justify-content:center}
 .composition .vmk .piano-keyboard{flex:0 1 auto;min-height:0;padding:6px 8px 0}
 .composition .vmk .piano-keyboard .pk-keys{height:62px}
@@ -301,8 +300,11 @@ kbd{min-width:84px;text-align:center;padding:6px 9px;border:1px solid #34495b;bo
 .canvas-zoom b{font-size:9px;color:#9fb2c4;min-width:32px;text-align:center;font-variant-numeric:tabular-nums}
 
 /* The canvas can now be taller than wide, and zoomed past the frame. */
-.canvas-shell{overflow:auto}
-.scene-canvas{flex:0 0 auto}
+/* The preview area centres the canvas and lets it shrink to fit whichever
+   dimension runs out first, so portrait and square fill the window without
+   being zoomed out by hand. */
+.canvas-shell{overflow:auto;align-items:center;justify-content:center}
+.scene-canvas{flex:0 0 auto;margin:auto}
 
 .key-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:7px 10px;margin-top:8px;
   background:rgba(8,20,32,.82);border:1px solid #1d3346;border-radius:8px}
@@ -383,3 +385,16 @@ kbd{min-width:84px;text-align:center;padding:6px 9px;border:1px solid #34495b;bo
 .destination-caveat svg{flex:0 0 auto;margin-top:1px}
 .primary.small.danger{background:#a3242c;border-color:#c0343d}
 .primary.small.danger:hover{background:#c0343d}
+
+/* Note-name callouts above the keys, as in a lesson video. */
+.pk-callouts{position:relative;height:16px;margin-bottom:2px;pointer-events:none}
+.piano-keyboard.pk-fill .pk-callouts{height:9%;min-height:12px}
+.pk-callout{position:absolute;transform:translateX(-50%);bottom:0;font-size:11px;font-weight:700;
+  color:var(--pk-accent);text-shadow:0 1px 3px #000a;white-space:nowrap;line-height:1}
+.piano-keyboard.pk-fill .pk-callout{font-size:clamp(9px,1.6cqw,22px)}
+
+/* Bound the preview column's height. Without min-height:0 a flex item grows to
+   fit its content, so a tall portrait canvas stretched the column and pushed
+   the key bar and transport off the bottom instead of shrinking to fit. */
+.studio-center{min-height:0;overflow:hidden}
+.canvas-shell{flex:1 1 0;min-height:0;overflow:hidden}

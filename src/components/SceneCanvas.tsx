@@ -7,7 +7,7 @@
  * resolution in the recording.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   clampToCanvas, hitTest, resizeRect, snapRect,
   type Handle, type Rect, type SnapGuide, type Source,
@@ -52,6 +52,7 @@ export function SceneCanvas({
 }: SceneCanvasProps) {
   const frameRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState>(null);
+  const [box, setBox] = useState({ width: 0, height: 0 });
   const [guides, setGuides] = useState<SnapGuide[]>([]);
   const [dragging, setDragging] = useState(false);
 
@@ -65,6 +66,40 @@ export function SceneCanvas({
   const updateSource = useCallback((id: string, patch: Partial<Source>) => {
     onChange(sources.map(source => (source.id === id ? { ...source, ...patch } : source)));
   }, [onChange, sources]);
+
+  /**
+   * Size the canvas to the largest box of the right shape that fits the space,
+   * then apply the zoom.
+   *
+   * CSS cannot express this on its own: aspect-ratio with both a max-width and
+   * a max-height has no intrinsic size to shrink from, and constraining one
+   * axis while fixing the other just squashes the picture. Measuring is exact,
+   * and it is what makes portrait and square fill the window at 100% instead of
+   * needing to be zoomed out by hand.
+   */
+  useLayoutEffect(() => {
+    const parent = frameRef.current?.parentElement;
+    if (!parent) return;
+
+    const fit = () => {
+      const style = getComputedStyle(parent);
+      const available = {
+        width: parent.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+        height: parent.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom),
+      };
+      if (available.width <= 0 || available.height <= 0) return;
+      const scale = Math.min(available.width / canvas.width, available.height / canvas.height) * viewZoom;
+      setBox({
+        width: Math.max(1, Math.floor(canvas.width * scale)),
+        height: Math.max(1, Math.floor(canvas.height * scale)),
+      });
+    };
+
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(parent);
+    return () => observer.disconnect();
+  }, [canvas.width, canvas.height, viewZoom]);
 
   /* ---------------------------------------------------------------- *
    * Pointer interaction
@@ -179,13 +214,15 @@ export function SceneCanvas({
    * ---------------------------------------------------------------- */
 
   const percent = (value: number, total: number) => `${(value / total) * 100}%`;
-  const aspect = `${canvas.width} / ${canvas.height}`;
 
   return (
     <div
       ref={frameRef}
       className={`scene-canvas ${locked ? 'is-locked' : ''}`}
-      style={{ aspectRatio: aspect, width: `${viewZoom * 100}%` }}
+      // Sized to fit the space in both directions. A portrait canvas is taller
+      // than the shell is deep, so constraining width alone left it running off
+      // the bottom until you zoomed out.
+      style={box.width ? { width: box.width, height: box.height } : undefined}
       onPointerDown={onBackgroundPointerDown}
       role="application"
       aria-label="Scene canvas"
@@ -363,6 +400,7 @@ function SourceBody({
           accent={props.accent ?? '#1d9cff'}
           showAllLabels={props.showLabels === 'all'}
           hideLabels={props.showLabels === 'none'}
+          namePlayed={props.namePlayed !== false}
           fill
           computerKeys
         />
