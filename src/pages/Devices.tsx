@@ -263,27 +263,27 @@ function CameraCard({
   onAddToScene: (deviceId: string, name: string) => void;
   sceneName?: string;
 }) {
-  const holderRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const [live, setLive] = useState(false);
   const [error, setError] = useState('');
   const [format, setFormat] = useState('1080p30');
 
   const open = async () => {
-    const element = await cameraHub.acquire(camera.id, camera.name);
+    await cameraHub.acquire(camera.id, camera.name);
     const failure = cameraHub.errorFor(camera.id);
     if (failure) { setError(failure); setLive(false); return; }
-    const view = document.createElement('video');
-    view.muted = true; view.playsInline = true; view.autoplay = true;
-    view.srcObject = element.srcObject;
-    view.className = 'source-video';
-    holderRef.current?.replaceChildren(view);
-    await view.play().catch(() => {});
+    // Attach the shared stream to React's own element rather than swapping
+    // nodes underneath React, which corrupts its view of the tree.
+    if (videoRef.current) {
+      videoRef.current.srcObject = cameraHub.stream(camera.id) ?? null;
+      await videoRef.current.play().catch(() => {});
+    }
     setError('');
     setLive(true);
   };
 
   const close = () => {
-    holderRef.current?.replaceChildren();
+    if (videoRef.current) videoRef.current.srcObject = null;
     cameraHub.release(camera.id);
     setLive(false);
   };
@@ -305,7 +305,8 @@ function CameraCard({
         <div><Camera /><span><b>{camera.name}</b><small>{error || (live ? 'Live' : 'Not started')}</small></span></div>
         <Toggle value={live} onChange={next => (next ? void open() : close())} label={`Preview ${camera.name}`} />
       </div>
-      <div className="video-preview" ref={holderRef}>
+      <div className="video-preview">
+        <video ref={videoRef} className="source-video" muted playsInline autoPlay />
         {!live && (
           <span className="preview-placeholder"><Camera size={34} /><small>Turn on to preview</small></span>
         )}

@@ -126,6 +126,14 @@ class CameraHub {
     return entry?.stream ? entry.element : undefined;
   }
 
+  /**
+   * The live stream for a camera. Several <video> elements can share one
+   * MediaStream, so views attach this directly rather than copying nodes.
+   */
+  stream(deviceId: string): MediaStream | undefined {
+    return this.entries.get(deviceId)?.stream;
+  }
+
   isActive(deviceId: string): boolean {
     return Boolean(this.entries.get(deviceId)?.stream);
   }

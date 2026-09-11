@@ -344,41 +344,36 @@ function SourceBody({
 function CameraView({
   deviceId, fit, mirror, name,
 }: { deviceId?: string; fit: 'cover' | 'contain' | 'stretch'; mirror?: boolean; name: string }) {
-  const holderRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const [status, setStatus] = useState<'idle' | 'ready' | 'error'>('idle');
 
   useEffect(() => {
     if (!deviceId) { setStatus('idle'); return; }
     let cancelled = false;
-    let attached: HTMLVideoElement | undefined;
 
-    void cameraHub.acquire(deviceId).then(element => {
+    void cameraHub.acquire(deviceId).then(() => {
       if (cancelled) return;
       const error = cameraHub.errorFor(deviceId);
       if (error) { setStatus('error'); return; }
-      // The hub owns one element per device; mirror it into this box.
-      const clone = document.createElement('video');
-      clone.muted = true;
-      clone.playsInline = true;
-      clone.autoplay = true;
-      clone.srcObject = element.srcObject;
-      clone.className = 'source-video';
-      attached = clone;
-      holderRef.current?.replaceChildren(clone);
-      void clone.play().catch(() => {});
+      const element = videoRef.current;
+      if (!element) return;
+      // Several views share one stream; attaching it is enough, and the element
+      // stays React's to own so it is never removed behind React's back.
+      element.srcObject = cameraHub.stream(deviceId) ?? null;
+      void element.play().catch(() => {});
       setStatus('ready');
     });
 
     return () => {
       cancelled = true;
-      attached?.pause();
-      if (attached) attached.srcObject = null;
+      if (videoRef.current) videoRef.current.srcObject = null;
       cameraHub.release(deviceId);
     };
   }, [deviceId]);
 
   return (
-    <div className="source-camera" ref={holderRef} data-fit={fit} data-mirror={mirror ? 'yes' : 'no'}>
+    <div className="source-camera" data-fit={fit} data-mirror={mirror ? 'yes' : 'no'}>
+      <video ref={videoRef} className="source-video" muted playsInline autoPlay />
       {status !== 'ready' && (
         <span className="source-placeholder">
           <small>{status === 'error' ? 'Camera unavailable' : deviceId ? 'Starting…' : `${name}: choose a device`}</small>
