@@ -36,6 +36,10 @@ export type ChannelState = {
   isVoice: boolean;
   connected: boolean;
   error?: string;
+  /** What the device actually granted, for confirming input quality. */
+  channelCount?: number;
+  sampleRate?: number;
+  trackLabel?: string;
 };
 
 export type ChannelLevel = {
@@ -240,10 +244,17 @@ export class AudioEngine {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           deviceId: options.deviceId ? { exact: options.deviceId } : undefined,
-          // Teaching audio: keep the raw signal, let the mixer shape it.
+          // Every browser "cleanup" stage is off. These are tuned for speech on
+          // a laptop mic and would wreck a line input from an audio interface or
+          // a virtual cable carrying a sampler's output: noise suppression eats
+          // reverb tails, and auto gain pumps on sustained chords.
           echoCancellation: false,
           noiseSuppression: false,
           autoGainControl: false,
+          // Ask for full-quality stereo. A mono mic simply reports one channel.
+          channelCount: { ideal: 2 },
+          sampleRate: { ideal: 48000 },
+          sampleSize: { ideal: 24 },
         },
         video: false,
       });
@@ -254,11 +265,57 @@ export class AudioEngine {
       nodes.stream = stream;
       state.connected = true;
       state.error = undefined;
+
+      // Report what the device actually granted, so the Devices page can show
+      // whether a line input really came in as 48 kHz stereo.
+      const track = stream.getAudioTracks()[0];
+      const settings = track?.getSettings?.() ?? {};
+      state.channelCount = settings.channelCount;
+      state.sampleRate = settings.sampleRate ?? ctx.sampleRate;
+      state.trackLabel = track?.label;
     } catch (error) {
       state.connected = false;
       state.error = error instanceof Error ? error.message : 'Device unavailable';
     }
     return { ...state };
+  }
+
+  /**
+   * Create a mixer channel with no device attached. The standard slots exist
+   * from startup so the Mixer always shows a full desk, whether or not anything
+   * is plugged in yet.
+   */
+  ensureChannel(options: { id: string; label: string; isVoice?: boolean; gain?: number }): ChannelState {
+    const existing = this.channels.get(options.id);
+    if (existing) return { ...existing.state };
+    const state: ChannelState = {
+      id: options.id,
+      label: options.label,
+      kind: 'input',
+      gain: options.gain ?? 0.75,
+      muted: false,
+      soloed: false,
+      isVoice: options.isVoice ?? false,
+      connected: false,
+    };
+    this.channels.set(options.id, this.createChannelNodes(state));
+    return { ...state };
+  }
+
+  /** Disconnect a channel's device but keep the strip on the desk. */
+  clearChannelDevice(id: string): void {
+    const nodes = this.channels.get(id);
+    if (!nodes || nodes.state.kind !== 'input') return;
+    nodes.stream?.getTracks().forEach(track => track.stop());
+    try { nodes.source?.disconnect(); } catch { /* already detached */ }
+    nodes.stream = undefined;
+    nodes.source = undefined;
+    nodes.state.connected = false;
+    nodes.state.deviceId = undefined;
+    nodes.state.error = undefined;
+    nodes.state.channelCount = undefined;
+    nodes.state.sampleRate = undefined;
+    nodes.state.trackLabel = undefined;
   }
 
   removeChannel(id: string): void {

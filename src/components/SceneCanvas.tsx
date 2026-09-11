@@ -14,6 +14,7 @@ import {
 } from '../lib/scene';
 import { PianoKeyboard } from './PianoKeyboard';
 import { cameraHub } from '../lib/cameraHub';
+import { findBackdrop } from '../lib/backdrops';
 import type { Accidental } from '../lib/chords';
 
 const HANDLES: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
@@ -267,6 +268,9 @@ function SourceBody({
   const { props } = source;
 
   switch (source.kind) {
+    case 'backdrop':
+      return <div className="source-fill" style={{ background: findBackdrop(props.backdrop).css }} />;
+
     case 'color':
       return <div className="source-fill" style={{ background: props.background ?? '#0b1a2b' }} />;
 

@@ -13,13 +13,24 @@
 export const CANVAS_WIDTH = 1920;
 export const CANVAS_HEIGHT = 1080;
 
-export type SourceKind = 'camera' | 'keyboard' | 'text' | 'image' | 'color' | 'chord';
+export type SourceKind = 'camera' | 'keyboard' | 'text' | 'image' | 'color' | 'chord' | 'backdrop';
+
+/**
+ * Cameras are assigned a teaching role rather than a bare device. A face
+ * camera is the usual 16:9 head-and-shoulders shot; a hand camera is the wide
+ * overhead strip looking down at the keys.
+ */
+export type CameraRole = 'face' | 'hand' | 'other';
 
 export type Rect = { x: number; y: number; width: number; height: number };
 
 export type SourceProps = {
   /** camera: which capture device to show. */
   deviceId?: string;
+  /** camera: what this shot is for; drives its default shape. */
+  role?: CameraRole;
+  /** backdrop: which preset to paint. */
+  backdrop?: string;
   /** camera/image: how the picture fills its box. */
   fit?: 'cover' | 'contain' | 'stretch';
   /** camera: mirror horizontally, which most teachers want for a face shot. */
@@ -82,9 +93,14 @@ const BASE: Omit<Source, 'id' | 'kind' | 'name' | 'props'> = {
 export function createSource(kind: SourceKind, overrides: Partial<Source> = {}): Source {
   const defaults: Record<SourceKind, { name: string; rect: Rect; props: SourceProps }> = {
     camera: {
-      name: 'Camera',
+      name: 'Face camera',
       rect: { x: 1060, y: 60, width: 800, height: 450 },
-      props: { fit: 'cover', mirror: false, radius: 18 },
+      props: { fit: 'cover', mirror: false, radius: 18, role: 'face' },
+    },
+    backdrop: {
+      name: 'Backdrop',
+      rect: { x: 0, y: 0, width: CANVAS_WIDTH, height: CANVAS_HEIGHT },
+      props: { backdrop: 'studio', radius: 0 },
     },
     keyboard: {
       name: 'Virtual keyboard',
@@ -132,6 +148,38 @@ export function createSource(kind: SourceKind, overrides: Partial<Source> = {}):
     // Overridden props are merged over the preset rather than replacing it.
     props: { ...preset.props, ...(overriddenProps ?? {}) },
   };
+}
+
+/**
+ * Default frame for a camera role.
+ *
+ * A face shot is a 16:9 box in the upper right. A hand shot is the wide, short
+ * strip an overhead camera actually produces looking down the length of a
+ * keyboard, so it defaults to a letterbox across the width.
+ */
+export function cameraRoleRect(role: CameraRole): Rect {
+  if (role === 'hand') {
+    return { x: 60, y: 470, width: 1800, height: 470 };
+  }
+  return { x: 1060, y: 60, width: 800, height: 450 };
+}
+
+/** Build a camera source for a teaching role, shaped to suit it. */
+export function createCameraSource(role: CameraRole, deviceId?: string, name?: string): Source {
+  const label = name ?? (role === 'hand' ? 'Hand camera' : role === 'face' ? 'Face camera' : 'Camera');
+  return createSource('camera', {
+    name: label,
+    ...cameraRoleRect(role),
+    props: {
+      deviceId,
+      role,
+      fit: 'cover',
+      // A face shot is usually mirrored so the teacher's movements read naturally;
+      // an overhead hand shot must not be, or the keyboard would run backwards.
+      mirror: role === 'face',
+      radius: role === 'hand' ? 10 : 18,
+    },
+  });
 }
 
 /** A new scene starts empty — the teacher builds their own layout. */
@@ -342,7 +390,7 @@ export function normalizeScenes(raw: unknown): Scene[] {
       if (!item || typeof item !== 'object') return;
       const source = item as Partial<Source>;
       if (typeof source.kind !== 'string') return;
-      if (!['camera', 'keyboard', 'text', 'image', 'color', 'chord'].includes(source.kind)) return;
+      if (!['camera', 'keyboard', 'text', 'image', 'color', 'chord', 'backdrop'].includes(source.kind)) return;
       if (!isFiniteNumber(source.x) || !isFiniteNumber(source.y)) return;
       if (!isFiniteNumber(source.width) || !isFiniteNumber(source.height)) return;
       sources.push({

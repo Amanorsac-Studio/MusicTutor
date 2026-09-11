@@ -29,6 +29,9 @@ export type AppSettings = {
   duckingAmountDb: number;
   midiEcho: boolean;
   outputDeviceId: string;
+  /** Which physical camera fills each teaching role. */
+  faceCameraId: string;
+  handCameraId: string;
   /** Interface language tag (BCP 47), used for date and number formatting. */
   locale: string;
   theme: 'midnight' | 'graphite' | 'contrast';
@@ -54,6 +57,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   duckingAmountDb: -6,
   midiEcho: false,
   outputDeviceId: '',
+  faceCameraId: '',
+  handCameraId: '',
   locale: typeof navigator !== 'undefined' ? navigator.language : 'en-US',
   theme: 'midnight',
 };

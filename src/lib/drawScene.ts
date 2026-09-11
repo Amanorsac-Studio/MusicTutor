@@ -9,6 +9,7 @@
 import { CANVAS_HEIGHT, CANVAS_WIDTH, type Source } from './scene';
 import { isBlackKey, noteName, octaveOf, pitchClass, type Accidental } from './chords';
 import { cameraHub } from './cameraHub';
+import { findBackdrop, paintBackdrop } from './backdrops';
 
 export type RenderContext = {
   /** Notes currently sounding, for the keyboard and chord readout. */
@@ -187,6 +188,11 @@ function drawSource(ctx: CanvasRenderingContext2D, source: Source, context: Rend
   }
 
   switch (source.kind) {
+    case 'backdrop': {
+      paintBackdrop(ctx, findBackdrop(props.backdrop), width, height);
+      break;
+    }
+
     case 'color': {
       ctx.fillStyle = props.background ?? '#0b1a2b';
       ctx.fillRect(0, 0, width, height);

@@ -3,6 +3,7 @@ import { Select } from '../components/Select';
 import { Toggle, VerticalMeter, formatDb } from '../components/common';
 import { useStudio } from '../lib/useStudio';
 import { faderToGain, gainToDb } from '../lib/audioEngine';
+import { describeInputQuality } from '../lib/inputs';
 
 export function Mixer() {
   const {
@@ -44,9 +45,11 @@ export function Mixer() {
                   <small>
                     {channel.error
                       ? channel.error
-                      : channel.connected
-                        ? channel.isVoice ? 'Voice · ducking trigger' : 'Program audio'
-                        : 'Not connected'}
+                      : channel.kind === 'instrument'
+                        ? 'Built-in / MIDI'
+                        : channel.connected
+                          ? describeInputQuality(channel.channelCount, channel.sampleRate) || 'Connected'
+                          : 'No device — assign one on Devices'}
                   </small>
                 </div>
 

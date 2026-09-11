@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import {
   ArrowDown, ArrowUp, Camera, ChevronsDown, ChevronsUp, Circle, Copy, Eye, EyeOff,
   Image as ImageIcon, Keyboard, Lock, Maximize, Mic2, Move, Music2, Piano, Plus,
-  RotateCcw, Square, Trash2, Type, Unlock, Volume2,
+  RotateCcw, Square, Trash2, Type, Unlock, Video, Volume2,
 } from 'lucide-react';
 import { SceneCanvas } from '../components/SceneCanvas';
 import { DeviceSelect, Select } from '../components/Select';
@@ -11,19 +11,24 @@ import { useStudio } from '../lib/useStudio';
 import { detectChord, romanNumeral } from '../lib/chords';
 import { formatDuration } from '../lib/settings';
 import {
-  CANVAS_HEIGHT, CANVAS_WIDTH, centreRect, fillCanvas, fitToCanvas, reorder,
-  type Source, type SourceKind,
+  CANVAS_HEIGHT, CANVAS_WIDTH, centreRect, createCameraSource, createSource, fillCanvas,
+  cameraRoleRect, fitToCanvas, reorder, type CameraRole, type Source, type SourceKind,
 } from '../lib/scene';
+import { BACKDROPS } from '../lib/backdrops';
 import { midiManager } from '../lib/midi';
 import { cameraHub } from '../lib/cameraHub';
 
-const SOURCE_KINDS: Array<{ kind: SourceKind; label: string; Icon: typeof Camera }> = [
-  { kind: 'camera', label: 'Camera', Icon: Camera },
-  { kind: 'keyboard', label: 'Piano keyboard', Icon: Piano },
-  { kind: 'text', label: 'Text', Icon: Type },
-  { kind: 'chord', label: 'Chord readout', Icon: Music2 },
-  { kind: 'image', label: 'Image', Icon: ImageIcon },
-  { kind: 'color', label: 'Colour block', Icon: Square },
+type MenuEntry = { key: string; label: string; Icon: typeof Camera; kind: SourceKind; role?: CameraRole };
+
+const SOURCE_KINDS: MenuEntry[] = [
+  { key: 'backdrop', label: 'Backdrop', kind: 'backdrop', Icon: ImageIcon },
+  { key: 'camera-face', label: 'Face camera', kind: 'camera', role: 'face', Icon: Camera },
+  { key: 'camera-hand', label: 'Hand camera', kind: 'camera', role: 'hand', Icon: Video },
+  { key: 'keyboard', label: 'Piano keyboard', kind: 'keyboard', Icon: Piano },
+  { key: 'text', label: 'Text', kind: 'text', Icon: Type },
+  { key: 'chord', label: 'Chord readout', kind: 'chord', Icon: Music2 },
+  { key: 'image', label: 'Image', kind: 'image', Icon: ImageIcon },
+  { key: 'color', label: 'Colour block', kind: 'color', Icon: Square },
 ];
 
 export function Studio() {
@@ -59,19 +64,26 @@ export function Studio() {
     setSceneSources(reorder(activeScene.sources, selected.id, direction));
   };
 
-  const addSourceOfKind = (kind: SourceKind) => {
+  const addMenuEntry = (entry: MenuEntry) => {
     setAddMenuOpen(false);
-    // A new camera picks the first device that is not already on the canvas.
-    if (kind === 'camera') {
+
+    if (entry.kind === 'camera' && entry.role) {
+      // Prefer the camera already assigned to this role on the Devices page.
+      const assigned = entry.role === 'hand' ? settings.handCameraId : settings.faceCameraId;
       const used = new Set(activeScene?.sources.filter(s => s.kind === 'camera').map(s => s.props.deviceId));
-      const free = catalog.videoInputs.find(device => !used.has(device.id)) ?? catalog.videoInputs[0];
+      const fallback = catalog.videoInputs.find(device => !used.has(device.id)) ?? catalog.videoInputs[0];
+      const deviceId = assigned || fallback?.id;
+      const template = createCameraSource(entry.role, deviceId, entry.label);
       addSource('camera', {
-        name: free?.name ?? 'Camera',
-        props: { deviceId: free?.id },
+        name: template.name,
+        x: template.x, y: template.y, width: template.width, height: template.height,
+        props: template.props,
       });
       return;
     }
-    addSource(kind);
+
+    // Backdrops are placed at the back of the stack by addSource itself.
+    addSource(entry.kind);
   };
 
   return (
@@ -194,9 +206,9 @@ export function Studio() {
         </div>
         {addMenuOpen && (
           <div className="add-source-menu">
-            {SOURCE_KINDS.map(({ kind, label, Icon }) => (
-              <button key={kind} onClick={() => addSourceOfKind(kind)}>
-                <Icon size={14} />{label}
+            {SOURCE_KINDS.map(entry => (
+              <button key={entry.key} onClick={() => addMenuEntry(entry)}>
+                <entry.Icon size={14} />{entry.label}
               </button>
             ))}
           </div>
@@ -387,9 +399,49 @@ function SourceInspector({
 
       <hr />
 
+      {source.kind === 'backdrop' && (
+        <>
+          <label className="section-label">Backdrop</label>
+          <div className="backdrop-picks">
+            {BACKDROPS.map(backdrop => (
+              <button
+                key={backdrop.id}
+                aria-label={backdrop.name}
+                title={backdrop.name}
+                aria-pressed={(source.props.backdrop ?? 'studio') === backdrop.id}
+                className={(source.props.backdrop ?? 'studio') === backdrop.id ? 'selected' : ''}
+                style={{ background: backdrop.css }}
+                onClick={() => prop('backdrop', backdrop.id)}
+              />
+            ))}
+          </div>
+          <small className="field-hint">
+            Backdrops sit behind every other source. Use an Image source instead to
+            use your own picture.
+          </small>
+        </>
+      )}
+
       {source.kind === 'camera' && (
         <>
           <label className="section-label">Camera</label>
+          <div className="inspector-field wide">
+            <span>Role</span>
+            <Select
+              label="Camera role"
+              value={source.props.role ?? 'face'}
+              onChange={value => {
+                const role = value as CameraRole;
+                // Switching role reshapes the frame to that shot's proportions.
+                onChange({ props: { role }, ...cameraRoleRect(role) });
+              }}
+              options={[
+                { value: 'face', label: 'Face camera (16:9)' },
+                { value: 'hand', label: 'Hand camera (wide strip)' },
+                { value: 'other', label: 'Other' },
+              ]}
+            />
+          </div>
           <DeviceSelect
             devices={cameras}
             value={source.props.deviceId ?? ''}

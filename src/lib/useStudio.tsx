@@ -20,6 +20,7 @@ import {
   createId, createScene, createSource, type Scene, type Source, type SourceKind,
 } from './scene';
 import { sceneCompositor } from './compositor';
+import { INPUT_SLOTS } from './inputs';
 import { detectChord, romanNumeral } from './chords';
 
 export type StudioValue = {
@@ -190,8 +191,15 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const addSource = useCallback((kind: SourceKind, overrides?: Partial<Source>) => {
     if (!activeSceneIdRef.current) return null;
     const source = createSource(kind, overrides);
-    setScenes(current => current.map(scene =>
-      (scene.id === activeSceneIdRef.current ? { ...scene, sources: [...scene.sources, source] } : scene)));
+    setScenes(current => current.map(scene => {
+      if (scene.id !== activeSceneIdRef.current) return scene;
+      // A backdrop is scenery: it always goes behind everything else, so adding
+      // one never hides the layout you have already built.
+      const sources = kind === 'backdrop'
+        ? [source, ...scene.sources]
+        : [...scene.sources, source];
+      return { ...scene, sources };
+    }));
     setSelectedSourceId(source.id);
     return source.id;
   }, []);
@@ -349,6 +357,11 @@ export function StudioProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     audioEngine.ensure();
+    // The standard strips exist from startup so the Mixer always shows a full
+    // desk, with working faders, before anything is plugged in.
+    INPUT_SLOTS.forEach(slot => audioEngine.ensureChannel({
+      id: slot.id, label: slot.label, isVoice: slot.isVoice,
+    }));
     syncChannels();
   }, [syncChannels]);
 
@@ -360,7 +373,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   }, [syncChannels]);
 
   const detachInput = useCallback((id: string) => {
-    audioEngine.removeChannel(id);
+    // Standard slots keep their strip on the desk; only the device is released.
+    if (INPUT_SLOTS.some(slot => slot.id === id)) audioEngine.clearChannelDevice(id);
+    else audioEngine.removeChannel(id);
     syncChannels();
   }, [syncChannels]);
 

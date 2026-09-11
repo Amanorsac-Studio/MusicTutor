@@ -8,14 +8,8 @@ import { useStudio } from '../lib/useStudio';
 import { audioEngine } from '../lib/audioEngine';
 import { midiManager } from '../lib/midi';
 import { cameraHub } from '../lib/cameraHub';
-
-/** The four mixer inputs a lesson setup normally uses. */
-const INPUT_SLOTS = [
-  { id: 'mic1', label: 'Mic 1', hint: 'Teacher voice', isVoice: true },
-  { id: 'mic2', label: 'Mic 2', hint: 'Second voice or room', isVoice: true },
-  { id: 'inst1', label: 'Instrument 1', hint: 'Keyboard or piano mic', isVoice: false },
-  { id: 'inst2', label: 'Instrument 2', hint: 'Second instrument', isVoice: false },
-];
+import { INPUT_SLOTS, describeInputQuality } from '../lib/inputs';
+import { createCameraSource, type CameraRole } from '../lib/scene';
 
 export function Devices() {
   const {
@@ -42,9 +36,17 @@ export function Devices() {
    * two pages: a camera connected here becomes a source you can position in the
    * Tutorial workspace.
    */
-  const addCameraToScene = (deviceId: string, name: string) => {
-    const id = addSource('camera', { name, props: { deviceId } });
-    if (id) setNotice(`${name} added to "${activeScene?.name ?? 'the scene'}" — arrange it in the Tutorial tab.`);
+  const addCameraToScene = (role: CameraRole, deviceId: string, name: string) => {
+    if (!deviceId) { setNotice(`Choose a device for the ${name.toLowerCase()} first.`); return; }
+    // createCameraSource shapes the frame for the role: a 16:9 box for a face
+    // shot, a wide overhead strip for hands.
+    const template = createCameraSource(role, deviceId, name);
+    const id = addSource('camera', {
+      name: template.name,
+      x: template.x, y: template.y, width: template.width, height: template.height,
+      props: template.props,
+    });
+    if (id) setNotice(`${name} added to ${activeScene?.name ?? 'the scene'} — arrange it in the Tutorial tab.`);
     else setNotice('Create a scene in the Tutorial tab first.');
   };
 
@@ -80,8 +82,23 @@ export function Devices() {
       )}
 
       <div className="page-grid devices-grid">
-        <CameraCards
+        <CameraRoleCard
+          role="face"
+          title="Face camera"
+          subtitle="Head and shoulders, 16:9"
           cameras={catalog.videoInputs}
+          deviceId={settings.faceCameraId}
+          onDevice={id => updateSettings({ faceCameraId: id })}
+          onAddToScene={addCameraToScene}
+          sceneName={activeScene?.name}
+        />
+        <CameraRoleCard
+          role="hand"
+          title="Hand camera"
+          subtitle="Overhead view of the keys, wide strip"
+          cameras={catalog.videoInputs}
+          deviceId={settings.handCameraId}
+          onDevice={id => updateSettings({ handCameraId: id })}
           onAddToScene={addCameraToScene}
           sceneName={activeScene?.name}
         />
@@ -106,6 +123,7 @@ export function Devices() {
             {INPUT_SLOTS.map((slot, index) => {
               const channel = channelFor(slot.id);
               const level = levels[slot.id];
+              const quality = describeInputQuality(channel?.channelCount, channel?.sampleRate);
               return (
                 <div key={slot.id}>
                   <span className="device-num">{index + 1}</span>
@@ -115,7 +133,7 @@ export function Devices() {
                       {channel?.error
                         ? channel.error
                         : channel?.connected
-                          ? `${catalog.audioInputs.find(d => d.id === routes[slot.id])?.name ?? 'Connected'} · ${formatDb(level?.rms)} dBFS`
+                          ? `${quality || 'Connected'} · ${formatDb(level?.rms)} dBFS`
                           : slot.hint}
                     </small>
                   </span>
@@ -125,7 +143,7 @@ export function Devices() {
                     value={routes[slot.id] ?? ''}
                     onChange={value => void assignInput(slot.id, value, slot.label, slot.isVoice)}
                     label={`${slot.label} source`}
-                    emptyLabel="No microphones found"
+                    emptyLabel="No inputs found"
                     allowNone
                     noneLabel="Not assigned"
                   />
@@ -133,6 +151,12 @@ export function Devices() {
               );
             })}
           </div>
+          <p className="panel-hint">
+            Inputs are captured with echo cancellation, noise suppression and auto gain all
+            switched off, so a line input or a virtual cable arrives unprocessed. To capture a
+            plug-in host such as Kontakt, route its output to a virtual audio device and pick
+            that device on the App audio slot.
+          </p>
         </section>
 
         <section className="content-card">
@@ -227,40 +251,21 @@ export function Devices() {
  * Cameras
  * ------------------------------------------------------------------ */
 
-/** One card per detected camera, each previewing through the shared hub. */
-function CameraCards({
-  cameras, onAddToScene, sceneName,
+/**
+ * One card per teaching role rather than per detected device. A lesson has a
+ * face shot and an overhead hand shot; which physical camera fills each is a
+ * setting, not a separate card.
+ */
+function CameraRoleCard({
+  role, title, subtitle, cameras, deviceId, onDevice, onAddToScene, sceneName,
 }: {
+  role: CameraRole;
+  title: string;
+  subtitle: string;
   cameras: Array<{ id: string; name: string }>;
-  onAddToScene: (deviceId: string, name: string) => void;
-  sceneName?: string;
-}) {
-  if (!cameras.length) {
-    return (
-      <section className="content-card span-two">
-        <div className="card-title">
-          <div><Camera /><span><b>Cameras</b><small>None detected</small></span></div>
-        </div>
-        <p className="panel-hint">
-          Connect a camera, then press “Connect devices” above to grant access and list it here.
-        </p>
-      </section>
-    );
-  }
-  return (
-    <>
-      {cameras.map(camera => (
-        <CameraCard key={camera.id} camera={camera} onAddToScene={onAddToScene} sceneName={sceneName} />
-      ))}
-    </>
-  );
-}
-
-function CameraCard({
-  camera, onAddToScene, sceneName,
-}: {
-  camera: { id: string; name: string };
-  onAddToScene: (deviceId: string, name: string) => void;
+  deviceId: string;
+  onDevice: (id: string) => void;
+  onAddToScene: (role: CameraRole, deviceId: string, name: string) => void;
   sceneName?: string;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -268,14 +273,15 @@ function CameraCard({
   const [error, setError] = useState('');
   const [format, setFormat] = useState('1080p30');
 
+  const selected = deviceId || cameras[0]?.id || '';
+
   const open = async () => {
-    await cameraHub.acquire(camera.id, camera.name);
-    const failure = cameraHub.errorFor(camera.id);
+    if (!selected) { setError('No camera selected'); return; }
+    await cameraHub.acquire(selected, title);
+    const failure = cameraHub.errorFor(selected);
     if (failure) { setError(failure); setLive(false); return; }
-    // Attach the shared stream to React's own element rather than swapping
-    // nodes underneath React, which corrupts its view of the tree.
     if (videoRef.current) {
-      videoRef.current.srcObject = cameraHub.stream(camera.id) ?? null;
+      videoRef.current.srcObject = cameraHub.stream(selected) ?? null;
       await videoRef.current.play().catch(() => {});
     }
     setError('');
@@ -284,36 +290,56 @@ function CameraCard({
 
   const close = () => {
     if (videoRef.current) videoRef.current.srcObject = null;
-    cameraHub.release(camera.id);
+    if (selected) cameraHub.release(selected);
     setLive(false);
   };
 
-  useEffect(() => () => { if (live) cameraHub.release(camera.id); }, [live, camera.id]);
+  useEffect(() => () => { if (live && selected) cameraHub.release(selected); }, [live, selected]);
 
   const applyFormat = async (next: string) => {
     setFormat(next);
     const [width, height, frameRate] = next === '720p30'
       ? [1280, 720, 30]
       : next === '1080p60' ? [1920, 1080, 60] : [1920, 1080, 30];
-    const failure = await cameraHub.applyFormat(camera.id, width, height, frameRate);
+    const failure = await cameraHub.applyFormat(selected, width, height, frameRate);
     if (failure) setError(failure);
   };
 
   return (
     <section className="content-card camera-card">
       <div className="card-title">
-        <div><Camera /><span><b>{camera.name}</b><small>{error || (live ? 'Live' : 'Not started')}</small></span></div>
-        <Toggle value={live} onChange={next => (next ? void open() : close())} label={`Preview ${camera.name}`} />
+        <div>
+          <Camera />
+          <span><b>{title}</b><small>{error || (live ? 'Live' : subtitle)}</small></span>
+        </div>
+        <Toggle
+          value={live}
+          onChange={next => (next ? void open() : close())}
+          label={`Preview ${title}`}
+          disabled={!cameras.length}
+        />
       </div>
-      <div className="video-preview">
+
+      <div className={`video-preview ${role === 'hand' ? 'hand-shot' : ''}`}>
         <video ref={videoRef} className="source-video" muted playsInline autoPlay />
         {!live && (
-          <span className="preview-placeholder"><Camera size={34} /><small>Turn on to preview</small></span>
+          <span className="preview-placeholder">
+            <Camera size={34} />
+            <small>{cameras.length ? 'Turn on to preview' : 'No cameras detected'}</small>
+          </span>
         )}
       </div>
+
       <div className="two-fields">
+        <DeviceSelect
+          devices={cameras}
+          value={selected}
+          onChange={id => { if (live) close(); onDevice(id); }}
+          label={`${title} device`}
+          emptyLabel="No cameras found"
+        />
         <Select
-          label={`${camera.name} format`}
+          label={`${title} format`}
           value={format}
           onChange={value => void applyFormat(value)}
           options={[
@@ -322,12 +348,15 @@ function CameraCard({
             { value: '1080p60', label: '1920 × 1080 · 60 fps' },
           ]}
         />
-        <button className="primary small" onClick={() => onAddToScene(camera.id, camera.name)}>
-          <Plus size={14} />Add to scene
-        </button>
       </div>
+
+      <button className="primary small wide" onClick={() => onAddToScene(role, selected, title)}>
+        <Plus size={14} />Add to scene
+      </button>
       <small className="field-hint">
-        {sceneName ? `Adds a camera source to “${sceneName}”, ready to position in the Tutorial tab.` : 'Create a scene first.'}
+        {sceneName
+          ? `Adds a ${role === 'hand' ? 'wide overhead strip' : '16:9 box'} to ${sceneName}.`
+          : 'Create a scene in the Tutorial tab first.'}
       </small>
     </section>
   );

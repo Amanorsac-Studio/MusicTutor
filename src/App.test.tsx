@@ -104,7 +104,7 @@ describe('device failures degrade gracefully', () => {
     // The camera reaches the scene editor as an addable source.
     await waitFor(() => expect(screen.getByRole('button', { name: 'Add source' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
-    fireEvent.click(await screen.findByRole('button', { name: /^Camera$/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Face camera$/ }));
     await waitFor(() => {
       expect(within(screen.getByLabelText('Camera device')).getByText('Studio Camera')).toBeInTheDocument();
     });
@@ -201,18 +201,35 @@ describe('Devices and Tutorial stay in step', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Add source' })).toBeEnabled());
 
     fireEvent.click(screen.getByRole('button', { name: /^Devices$/ }));
-    fireEvent.click(await screen.findByRole('button', { name: /Add to scene/ }));
+    fireEvent.click((await screen.findAllByRole('button', { name: /Add to scene/ }))[0]);
 
     // Back in the Tutorial, the camera is a real source on the canvas.
     fireEvent.click(screen.getByRole('button', { name: /^Tutorial$/ }));
     await waitFor(() => expect(screen.getByText('1 source')).toBeInTheDocument());
-    expect(screen.getByRole('button', { name: /Hide Studio Camera/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Hide Face camera/ })).toBeInTheDocument();
   });
 
-  it('lists one card per detected camera', async () => {
+  it('offers exactly a face camera and a hand camera, not one card per device', async () => {
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: /^Devices$/ }));
-    expect(await screen.findByRole('button', { name: /Preview Studio Camera/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /Preview Face camera/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Preview Hand camera/ })).toBeInTheDocument();
+    // The device name appears as a choice inside the role, not as its own card.
+    expect(screen.queryByRole('button', { name: /Preview Studio Camera/ })).not.toBeInTheDocument();
+  });
+
+  it('shapes a hand camera as a wide overhead strip', async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add source' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: /^Devices$/ }));
+    const addButtons = await screen.findAllByRole('button', { name: /Add to scene/ });
+    // The second card is the hand camera.
+    fireEvent.click(addButtons[1]);
+    fireEvent.click(screen.getByRole('button', { name: /^Tutorial$/ }));
+    await waitFor(() => expect(screen.getByLabelText('Hand camera W')).toBeInTheDocument());
+    const width = Number((screen.getByLabelText('Hand camera W') as HTMLInputElement).value);
+    const height = Number((screen.getByLabelText('Hand camera H') as HTMLInputElement).value);
+    expect(width).toBeGreaterThan(height * 2);
   });
 });
 

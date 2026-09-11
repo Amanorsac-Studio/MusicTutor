@@ -275,3 +275,17 @@ kbd{min-width:84px;text-align:center;padding:6px 9px;border:1px solid #34495b;bo
 .danger-action{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;
   border:1px solid #7c3235;background:#2a1417;color:#ff9fa4;border-radius:7px;padding:9px;font-size:11px;cursor:pointer}
 .danger-action:hover{background:#3a1a1e;color:#ffc4c7}
+
+/* ================= Backdrops, camera roles, mixer strips ================= */
+.backdrop-picks{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.backdrop-picks button{height:34px;border-radius:6px;border:1px solid #22394d;cursor:pointer;padding:0}
+.backdrop-picks button:hover{border-color:#3a6f9e}
+.backdrop-picks button.selected{border-color:var(--blue);box-shadow:0 0 0 1px var(--blue),0 0 12px -3px var(--blue)}
+
+/* A hand camera is a wide overhead strip, so its preview matches that shape. */
+.video-preview.hand-shot{height:96px}
+.primary.small.wide{width:100%;justify-content:center;margin-top:9px}
+
+/* Strips with nothing plugged in stay on the desk but read as inactive. */
+.channel-strip.unpatched .strip-head b{color:#8fa3b6}
+.channel-strip.unpatched .tall-meter{opacity:.45}
