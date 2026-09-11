@@ -14,7 +14,7 @@ import { createCameraSource, type CameraRole } from '../lib/scene';
 export function Devices() {
   const {
     catalog, refreshDevices, channels, levels, attachInput, detachInput, settings, updateSettings,
-    addSource, activeScene, setNotice,
+    addSource, activeScene, setNotice, canvasSize,
   } = useStudio();
 
   const [permission, setPermission] = useState<'idle' | 'pending' | 'ready' | 'blocked'>('idle');
@@ -40,7 +40,7 @@ export function Devices() {
     if (!deviceId) { setNotice(`Choose a device for the ${name.toLowerCase()} first.`); return; }
     // createCameraSource shapes the frame for the role: a 16:9 box for a face
     // shot, a wide overhead strip for hands.
-    const template = createCameraSource(role, deviceId, name);
+    const template = createCameraSource(role, deviceId, name, canvasSize);
     const id = addSource('camera', {
       name: template.name,
       x: template.x, y: template.y, width: template.width, height: template.height,
@@ -82,26 +82,49 @@ export function Devices() {
       )}
 
       <div className="page-grid devices-grid">
-        <CameraRoleCard
-          role="face"
-          title="Face camera"
-          subtitle="Head and shoulders, 16:9"
-          cameras={catalog.videoInputs}
-          deviceId={settings.faceCameraId}
-          onDevice={id => updateSettings({ faceCameraId: id })}
-          onAddToScene={addCameraToScene}
-          sceneName={activeScene?.name}
-        />
-        <CameraRoleCard
-          role="hand"
-          title="Hand camera"
-          subtitle="Overhead view of the keys, wide strip"
-          cameras={catalog.videoInputs}
-          deviceId={settings.handCameraId}
-          onDevice={id => updateSettings({ handCameraId: id })}
-          onAddToScene={addCameraToScene}
-          sceneName={activeScene?.name}
-        />
+        <section className="content-card span-two">
+          <div className="card-title">
+            <div>
+              <Camera />
+              <span>
+                <b>Cameras</b>
+                <small>
+                  {catalog.videoInputs.length} detected
+                  {catalog.labelsVisible ? '' : ' — connect to see device names'}
+                </small>
+              </span>
+            </div>
+            <button className="icon-btn" onClick={() => void refreshDevices(true)} aria-label="Refresh cameras">
+              <RotateCcw size={16} />
+            </button>
+          </div>
+
+          <div className="camera-rows">
+            <CameraRoleRow
+              role="face"
+              title="Face camera"
+              hint="Head and shoulders, 16:9"
+              cameras={catalog.videoInputs}
+              deviceId={settings.faceCameraId}
+              onDevice={id => updateSettings({ faceCameraId: id })}
+              onAddToScene={addCameraToScene}
+            />
+            <CameraRoleRow
+              role="hand"
+              title="Hand camera"
+              hint="Overhead view of the keys, wide strip"
+              cameras={catalog.videoInputs}
+              deviceId={settings.handCameraId}
+              onDevice={id => updateSettings({ handCameraId: id })}
+              onAddToScene={addCameraToScene}
+            />
+          </div>
+
+          <p className="panel-hint">
+            Whatever you choose here is what a Face or Hand camera uses when you add one
+            to a scene in the Tutorial tab{activeScene ? ` (currently ${activeScene.name})` : ''}.
+          </p>
+        </section>
 
         <section className="content-card span-two">
           <div className="card-title">
@@ -252,26 +275,23 @@ export function Devices() {
  * ------------------------------------------------------------------ */
 
 /**
- * One card per teaching role rather than per detected device. A lesson has a
- * face shot and an overhead hand shot; which physical camera fills each is a
- * setting, not a separate card.
+ * One row per teaching role. Which physical camera fills a role is a setting,
+ * so choosing it here is immediately what a scene's Face or Hand camera shows.
  */
-function CameraRoleCard({
-  role, title, subtitle, cameras, deviceId, onDevice, onAddToScene, sceneName,
+function CameraRoleRow({
+  role, title, hint, cameras, deviceId, onDevice, onAddToScene,
 }: {
   role: CameraRole;
   title: string;
-  subtitle: string;
+  hint: string;
   cameras: Array<{ id: string; name: string }>;
   deviceId: string;
   onDevice: (id: string) => void;
   onAddToScene: (role: CameraRole, deviceId: string, name: string) => void;
-  sceneName?: string;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [live, setLive] = useState(false);
   const [error, setError] = useState('');
-  const [format, setFormat] = useState('1080p30');
 
   const selected = deviceId || cameras[0]?.id || '';
 
@@ -296,68 +316,38 @@ function CameraRoleCard({
 
   useEffect(() => () => { if (live && selected) cameraHub.release(selected); }, [live, selected]);
 
-  const applyFormat = async (next: string) => {
-    setFormat(next);
-    const [width, height, frameRate] = next === '720p30'
-      ? [1280, 720, 30]
-      : next === '1080p60' ? [1920, 1080, 60] : [1920, 1080, 30];
-    const failure = await cameraHub.applyFormat(selected, width, height, frameRate);
-    if (failure) setError(failure);
-  };
-
   return (
-    <section className="content-card camera-card">
-      <div className="card-title">
-        <div>
-          <Camera />
-          <span><b>{title}</b><small>{error || (live ? 'Live' : subtitle)}</small></span>
-        </div>
-        <Toggle
-          value={live}
-          onChange={next => (next ? void open() : close())}
-          label={`Preview ${title}`}
-          disabled={!cameras.length}
-        />
-      </div>
+    <div className={`camera-row ${role}`}>
+      <span className={`camera-thumb ${live ? 'live' : ''}`}>
+        <video ref={videoRef} muted playsInline autoPlay />
+        {!live && <Camera size={16} />}
+      </span>
 
-      <div className={`video-preview ${role === 'hand' ? 'hand-shot' : ''}`}>
-        <video ref={videoRef} className="source-video" muted playsInline autoPlay />
-        {!live && (
-          <span className="preview-placeholder">
-            <Camera size={34} />
-            <small>{cameras.length ? 'Turn on to preview' : 'No cameras detected'}</small>
-          </span>
-        )}
-      </div>
+      <span className="camera-row-name">
+        <b>{title}</b>
+        <small>{error || hint}</small>
+      </span>
 
-      <div className="two-fields">
-        <DeviceSelect
-          devices={cameras}
-          value={selected}
-          onChange={id => { if (live) close(); onDevice(id); }}
-          label={`${title} device`}
-          emptyLabel="No cameras found"
-        />
-        <Select
-          label={`${title} format`}
-          value={format}
-          onChange={value => void applyFormat(value)}
-          options={[
-            { value: '720p30', label: '1280 × 720 · 30 fps' },
-            { value: '1080p30', label: '1920 × 1080 · 30 fps' },
-            { value: '1080p60', label: '1920 × 1080 · 60 fps' },
-          ]}
-        />
-      </div>
+      <DeviceSelect
+        devices={cameras}
+        value={selected}
+        onChange={id => { if (live) close(); onDevice(id); }}
+        label={`${title} device`}
+        emptyLabel="No cameras found"
+      />
 
-      <button className="primary small wide" onClick={() => onAddToScene(role, selected, title)}>
-        <Plus size={14} />Add to scene
-      </button>
-      <small className="field-hint">
-        {sceneName
-          ? `Adds a ${role === 'hand' ? 'wide overhead strip' : '16:9 box'} to ${sceneName}.`
-          : 'Create a scene in the Tutorial tab first.'}
-      </small>
-    </section>
+      <Toggle
+        value={live}
+        onChange={next => (next ? void open() : close())}
+        label={`Preview ${title}`}
+        disabled={!cameras.length}
+      />
+
+      <button
+        className="subtle-btn"
+        onClick={() => onAddToScene(role, selected, title)}
+        disabled={!cameras.length}
+      ><Plus size={13} />Add to scene</button>
+    </div>
   );
 }

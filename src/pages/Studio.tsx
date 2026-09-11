@@ -5,6 +5,7 @@ import {
   RotateCcw, Square, Trash2, Type, Unlock, Video, Volume2,
 } from 'lucide-react';
 import { SceneCanvas } from '../components/SceneCanvas';
+import { TrackPanel } from '../components/TrackPanel';
 import { DeviceSelect, Select } from '../components/Select';
 import { Meter, formatDb } from '../components/common';
 import { useStudio } from '../lib/useStudio';
@@ -386,7 +387,7 @@ export function Studio() {
 
       {/* --------------------------------------------------------- right */}
       <aside className="side right-panel">
-        <div className="inspector-title"><span>{selected ? 'Source properties' : 'Inspector'}</span></div>
+        {selected && <div className="inspector-title"><span>Source properties</span></div>}
         {selected ? (
           <SourceInspector
             source={selected}
@@ -397,11 +398,9 @@ export function Studio() {
             onLayer={layerAction}
           />
         ) : (
-          <p className="panel-hint">
-            Select a source on the canvas to move, resize and style it.
-            Drag to move, pull the handles to resize, hold Shift to keep the shape,
-            hold Alt to ignore the guides, and use the arrow keys to nudge.
-          </p>
+          // With nothing selected the column becomes the backing-track player,
+          // rather than sitting empty through the whole lesson.
+          <TrackPanel />
         )}
       </aside>
     </main>

@@ -318,3 +318,47 @@ kbd{min-width:84px;text-align:center;padding:6px 9px;border:1px solid #34495b;bo
 .key-now b{font-size:16px;color:#f2f7fc}
 .key-now i{font-style:normal;font-size:12px;font-weight:700;color:#7fc4ff}
 .key-now small{font-size:10px;color:#5d7288}
+
+/* ================= Camera list ================= */
+.camera-rows{display:flex;flex-direction:column}
+.camera-row{display:grid;grid-template-columns:74px 1fr 220px auto auto;gap:12px;align-items:center;
+  border-top:1px solid #172b3b;padding:11px 0}
+.camera-row:first-child{border-top:0}
+.camera-thumb{position:relative;width:74px;height:42px;border-radius:5px;overflow:hidden;background:#08131e;
+  border:1px solid #1d3346;display:grid;place-items:center;color:#4a6076}
+.camera-row.hand .camera-thumb{height:28px}
+.camera-thumb video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
+.camera-thumb:not(.live) video{opacity:0}
+.camera-row-name b,.camera-row-name small{display:block}
+.camera-row-name b{font-size:11px}
+.camera-row-name small{font-size:9px;color:#72869a;margin-top:3px}
+.camera-row .subtle-btn{width:auto;margin:0;white-space:nowrap}
+
+/* ================= Backing track player ================= */
+.track-panel{display:flex;flex-direction:column;gap:9px}
+.track-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.track-head b{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.track-head button{border:0;background:transparent;color:#6d8398;cursor:pointer;padding:3px;border-radius:4px}
+.track-head button:hover{background:#2a1417;color:#ff9fa4}
+.track-tempo{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 11px;
+  border:1px solid #22394d;border-radius:8px;background:#0b1825}
+.track-tempo-main{display:flex;align-items:baseline;gap:6px;color:#5cbcff}
+.track-tempo-main b{font-size:21px;color:#f2f7fc;font-variant-numeric:tabular-nums}
+.track-tempo-main small{font-size:9px;color:#7f93a7}
+.track-confidence{font-size:9px;color:#6d8194;text-align:right;max-width:110px}
+.track-confidence.low{color:#e0b355}
+.track-transport{display:flex;align-items:center;gap:6px}
+.track-transport button{border:1px solid #26405a;background:#102132;color:#c3d4e3;border-radius:6px;
+  width:30px;height:30px;display:grid;place-items:center;cursor:pointer}
+.track-transport button:hover{background:#173250;color:#fff}
+.track-transport .track-play{width:38px;height:38px;background:var(--blue);border-color:#4fb4ff;color:#fff}
+.track-transport .track-play:hover{background:#3badff}
+.track-time{margin-left:auto;font-size:10px;color:#9fb2c4;font-variant-numeric:tabular-nums}
+.track-scrub{width:100%;accent-color:var(--blue)}
+.track-bar{font-size:10px;color:#7f93a7;text-align:center;font-variant-numeric:tabular-nums}
+.speed-picks{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
+.speed-picks button{border:1px solid #26405a;background:#102132;color:#c3d4e3;border-radius:6px;
+  padding:6px 4px;font-size:10px;cursor:pointer}
+.speed-picks button:hover{background:#173250;color:#fff}
+.speed-picks button.active{background:var(--blue);border-color:#4fb4ff;color:#fff}
+.inspector-buttons button.active{background:var(--blue);border-color:#4fb4ff;color:#fff}

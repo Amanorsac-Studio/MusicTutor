@@ -179,6 +179,16 @@ export class AudioEngine {
     return this.ctx?.state === 'running';
   }
 
+  /**
+   * Attach an outside node to the programme bus, so whatever it plays is
+   * monitored, mixed and recorded like any other source. Used by the backing
+   * track player and its metronome.
+   */
+  connectExternal(node: AudioNode): void {
+    this.ensure();
+    if (this.programBus) node.connect(this.programBus);
+  }
+
   /** Stream carrying the full program mix, for MediaRecorder. */
   get recordingStream(): MediaStream | undefined {
     return this.recordingTap?.stream;
