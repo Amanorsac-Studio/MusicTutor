@@ -7,10 +7,18 @@
  * anything else on screen.
  */
 
-import { CANVAS_HEIGHT, CANVAS_WIDTH, type Source } from './scene';
+import { type Source } from './scene';
+import { LANDSCAPE_CANVAS } from './scene';
+import type { CanvasSize } from './formats';
 import { drawScene, type RenderContext } from './drawScene';
 
-export type SceneProvider = () => { sources: Source[]; context: RenderContext; background?: string };
+export type SceneProvider = () => {
+  sources: Source[];
+  context: RenderContext;
+  /** The layout space the sources are positioned in. */
+  canvas: CanvasSize;
+  background?: string;
+};
 
 export class SceneCompositor {
   private canvas?: HTMLCanvasElement;
@@ -18,6 +26,8 @@ export class SceneCompositor {
   private timer = 0;
   private provider?: SceneProvider;
   private fps = 30;
+  /** Pixel size of the output. Distinct from the layout space it is drawn from. */
+  private output: CanvasSize = { ...LANDSCAPE_CANVAS };
   private images = new Map<string, HTMLImageElement>();
   private pendingImages = new Set<string>();
 
@@ -29,12 +39,32 @@ export class SceneCompositor {
   surface(): HTMLCanvasElement {
     if (!this.canvas) {
       const canvas = document.createElement('canvas');
-      canvas.width = CANVAS_WIDTH;
-      canvas.height = CANVAS_HEIGHT;
+      canvas.width = this.output.width;
+      canvas.height = this.output.height;
       this.canvas = canvas;
       this.ctx = canvas.getContext('2d', { alpha: false });
     }
     return this.canvas;
+  }
+
+  /**
+   * Set the pixel size actually recorded. This is what makes a 4K choice mean
+   * 4K: previously the surface was fixed at 1920x1080 and only the bitrate
+   * changed, so "4K" produced an upscaled 1080p file.
+   */
+  setOutputSize(size: CanvasSize): void {
+    const width = Math.max(2, Math.round(size.width));
+    const height = Math.max(2, Math.round(size.height));
+    if (this.output.width === width && this.output.height === height && this.canvas) return;
+    this.output = { width, height };
+    if (this.canvas) {
+      this.canvas.width = width;
+      this.canvas.height = height;
+    }
+  }
+
+  get outputSize(): CanvasSize {
+    return { ...this.output };
   }
 
   get running(): boolean {
@@ -63,9 +93,18 @@ export class SceneCompositor {
     const ctx = this.ctx;
     const provider = this.provider;
     if (!ctx || !provider) return;
-    const { sources, context, background } = provider();
+    const { sources, context, canvas, background } = provider();
     this.ensureImages(sources, context);
-    drawScene(ctx, sources, context, background);
+
+    // Sources are positioned in layout space; scale the context so the same
+    // coordinates fill whatever resolution is being recorded.
+    ctx.save();
+    ctx.setTransform(
+      this.output.width / canvas.width, 0, 0,
+      this.output.height / canvas.height, 0, 0,
+    );
+    drawScene(ctx, sources, context, canvas, background);
+    ctx.restore();
   }
 
   /**

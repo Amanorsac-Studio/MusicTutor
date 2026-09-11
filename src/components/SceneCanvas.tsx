@@ -9,9 +9,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  CANVAS_HEIGHT, CANVAS_WIDTH, clampToCanvas, hitTest, resizeRect, snapRect,
-  type Handle, type Rect, type Scene, type SnapGuide, type Source,
+  clampToCanvas, hitTest, resizeRect, snapRect,
+  type Handle, type Rect, type SnapGuide, type Source,
 } from '../lib/scene';
+import type { CanvasSize } from '../lib/formats';
 import { PianoKeyboard } from './PianoKeyboard';
 import { cameraHub } from '../lib/cameraHub';
 import { findBackdrop } from '../lib/backdrops';
@@ -20,7 +21,12 @@ import type { Accidental } from '../lib/chords';
 const HANDLES: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
 
 export type SceneCanvasProps = {
-  scene: Scene;
+  /** The active format's layout. */
+  sources: Source[];
+  /** The layout space these sources are positioned in. */
+  canvas: CanvasSize;
+  /** Editor magnification. 1 fits the available width. */
+  viewZoom?: number;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   onChange: (sources: Source[]) => void;
@@ -41,7 +47,7 @@ type DragState =
   | null;
 
 export function SceneCanvas({
-  scene, selectedId, onSelect, onChange, activeNotes, onNoteOn, onNoteOff,
+  sources, canvas, viewZoom = 1, selectedId, onSelect, onChange, activeNotes, onNoteOn, onNoteOff,
   accidental, chordSymbol, chordNumeral, locked = false,
 }: SceneCanvasProps) {
   const frameRef = useRef<HTMLDivElement>(null);
@@ -53,12 +59,12 @@ export function SceneCanvas({
   const scale = useCallback((): number => {
     const rect = frameRef.current?.getBoundingClientRect();
     if (!rect || !rect.width) return 1;
-    return CANVAS_WIDTH / rect.width;
-  }, []);
+    return canvas.width / rect.width;
+  }, [canvas.width]);
 
   const updateSource = useCallback((id: string, patch: Partial<Source>) => {
-    onChange(scene.sources.map(source => (source.id === id ? { ...source, ...patch } : source)));
-  }, [onChange, scene.sources]);
+    onChange(sources.map(source => (source.id === id ? { ...source, ...patch } : source)));
+  }, [onChange, sources]);
 
   /* ---------------------------------------------------------------- *
    * Pointer interaction
@@ -73,18 +79,18 @@ export function SceneCanvas({
       const factor = scale();
       const dx = (event.clientX - drag.originX) * factor;
       const dy = (event.clientY - drag.originY) * factor;
-      const others = scene.sources.filter(s => s.id !== drag.id && s.visible);
+      const others = sources.filter(s => s.id !== drag.id && s.visible);
 
       if (drag.mode === 'move') {
         const moved = { ...drag.startRect, x: drag.startRect.x + dx, y: drag.startRect.y + dy };
         // Alt disables snapping for fine placement.
-        const snapped = event.altKey ? { rect: moved, guides: [] } : snapRect(moved, others);
+        const snapped = event.altKey ? { rect: moved, guides: [] } : snapRect(moved, others, canvas);
         setGuides(snapped.guides);
-        updateSource(drag.id, clampToCanvas(snapped.rect));
+        updateSource(drag.id, clampToCanvas(snapped.rect, canvas));
       } else {
         const resized = resizeRect(drag.startRect, drag.handle, dx, dy, event.shiftKey);
         setGuides([]);
-        updateSource(drag.id, clampToCanvas(resized));
+        updateSource(drag.id, clampToCanvas(resized, canvas));
       }
     };
 
@@ -102,7 +108,7 @@ export function SceneCanvas({
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
     };
-  }, [dragging, scale, scene.sources, updateSource]);
+  }, [dragging, scale, sources, updateSource, canvas]);
 
   const beginMove = (source: Source) => (event: React.PointerEvent) => {
     if (locked || source.locked) return;
@@ -138,7 +144,7 @@ export function SceneCanvas({
     const factor = scale();
     const x = (event.clientX - rect.left) * factor;
     const y = (event.clientY - rect.top) * factor;
-    const hit = hitTest(scene.sources, x, y);
+    const hit = hitTest(sources, x, y);
     onSelect(hit ? hit.id : null);
   };
 
@@ -157,32 +163,34 @@ export function SceneCanvas({
       };
       const delta = deltas[event.key];
       if (!delta) return;
-      const source = scene.sources.find(s => s.id === selectedId);
+      const source = sources.find(s => s.id === selectedId);
       if (!source || source.locked) return;
       event.preventDefault();
       updateSource(selectedId, clampToCanvas({
         x: source.x + delta[0], y: source.y + delta[1], width: source.width, height: source.height,
-      }));
+      }, canvas));
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [selectedId, locked, scene.sources, updateSource]);
+  }, [selectedId, locked, sources, updateSource, canvas]);
 
   /* ---------------------------------------------------------------- *
    * Rendering
    * ---------------------------------------------------------------- */
 
   const percent = (value: number, total: number) => `${(value / total) * 100}%`;
+  const aspect = `${canvas.width} / ${canvas.height}`;
 
   return (
     <div
       ref={frameRef}
       className={`scene-canvas ${locked ? 'is-locked' : ''}`}
+      style={{ aspectRatio: aspect, width: `${viewZoom * 100}%` }}
       onPointerDown={onBackgroundPointerDown}
       role="application"
       aria-label="Scene canvas"
     >
-      {scene.sources.map(source => {
+      {sources.map(source => {
         if (!source.visible) return null;
         const selected = source.id === selectedId;
         return (
@@ -190,17 +198,18 @@ export function SceneCanvas({
             key={source.id}
             className={`scene-source kind-${source.kind} ${selected ? 'selected' : ''} ${source.locked ? 'locked' : ''}`}
             style={{
-              left: percent(source.x, CANVAS_WIDTH),
-              top: percent(source.y, CANVAS_HEIGHT),
-              width: percent(source.width, CANVAS_WIDTH),
-              height: percent(source.height, CANVAS_HEIGHT),
+              left: percent(source.x, canvas.width),
+              top: percent(source.y, canvas.height),
+              width: percent(source.width, canvas.width),
+              height: percent(source.height, canvas.height),
               opacity: source.opacity,
-              borderRadius: `${((source.props.radius ?? 0) / CANVAS_WIDTH) * 100}%`,
+              borderRadius: `${((source.props.radius ?? 0) / canvas.width) * 100}%`,
             }}
             onPointerDown={source.kind === 'keyboard' ? undefined : beginMove(source)}
           >
             <SourceBody
               source={source}
+              canvasWidth={canvas.width}
               activeNotes={activeNotes}
               onNoteOn={onNoteOn}
               onNoteOff={onNoteOff}
@@ -235,12 +244,12 @@ export function SceneCanvas({
           key={`${guide.axis}-${guide.position}-${index}`}
           className={`snap-guide ${guide.axis}`}
           style={guide.axis === 'x'
-            ? { left: percent(guide.position, CANVAS_WIDTH) }
-            : { top: percent(guide.position, CANVAS_HEIGHT) }}
+            ? { left: percent(guide.position, canvas.width) }
+            : { top: percent(guide.position, canvas.height) }}
         />
       ))}
 
-      {!scene.sources.length && (
+      {!sources.length && (
         <div className="scene-empty">
           <b>Empty scene</b>
           <small>Add a source from the left panel to start building your layout.</small>
@@ -255,9 +264,10 @@ export function SceneCanvas({
  * ------------------------------------------------------------------ */
 
 function SourceBody({
-  source, activeNotes, onNoteOn, onNoteOff, accidental, chordSymbol, chordNumeral,
+  source, canvasWidth, activeNotes, onNoteOn, onNoteOff, accidental, chordSymbol, chordNumeral,
 }: {
   source: Source;
+  canvasWidth: number;
   activeNotes: Set<number>;
   onNoteOn: (note: number, velocity: number) => void;
   onNoteOff: (note: number) => void;
@@ -275,7 +285,17 @@ function SourceBody({
       return <div className="source-fill" style={{ background: props.background ?? '#0b1a2b' }} />;
 
     case 'camera':
-      return <CameraView deviceId={props.deviceId} fit={props.fit ?? 'cover'} mirror={props.mirror} name={source.name} />;
+      return (
+        <CameraView
+          deviceId={props.deviceId}
+          fit={props.fit ?? 'cover'}
+          mirror={props.mirror}
+          zoom={props.zoom ?? 1}
+          panX={props.panX ?? 0}
+          panY={props.panY ?? 0}
+          name={source.name}
+        />
+      );
 
     case 'image':
       return props.src
@@ -298,7 +318,7 @@ function SourceBody({
             justifyContent: props.align === 'center' ? 'center' : props.align === 'right' ? 'flex-end' : 'flex-start',
             textAlign: props.align ?? 'left',
             // Font size is in canvas units; cqw makes it scale with the preview.
-            fontSize: `${((props.fontSize ?? 72) / CANVAS_WIDTH) * 100}cqw`,
+            fontSize: `${((props.fontSize ?? 72) / canvasWidth) * 100}cqw`,
             fontWeight: props.fontWeight ?? 700,
             lineHeight: props.lineHeight ?? 1.15,
           }}
@@ -307,7 +327,12 @@ function SourceBody({
         </div>
       );
 
-    case 'chord':
+    case 'chord': {
+      const mode = props.chordMode ?? 'both';
+      const base = props.fontSize ?? 84;
+      const numeralSize = base * Math.min(3, Math.max(0.2, props.numeralScale ?? 0.5));
+      const showName = mode !== 'numerals';
+      const showNumeral = mode !== 'names' && Boolean(chordNumeral);
       return (
         <div
           className="source-chord"
@@ -315,13 +340,17 @@ function SourceBody({
             background: props.background && props.background !== 'transparent' ? props.background : undefined,
             color: props.color ?? '#fff',
             alignItems: props.align === 'center' ? 'center' : props.align === 'right' ? 'flex-end' : 'flex-start',
-            fontSize: `${((props.fontSize ?? 84) / CANVAS_WIDTH) * 100}cqw`,
           }}
         >
-          <b>{chordSymbol || '—'}</b>
-          {props.showRoman && chordNumeral && <i>{chordNumeral}</i>}
+          {showName && (
+            <b style={{ fontSize: `${(base / canvasWidth) * 100}cqw` }}>{chordSymbol || '—'}</b>
+          )}
+          {showNumeral && (
+            <i style={{ fontSize: `${(numeralSize / canvasWidth) * 100}cqw` }}>{chordNumeral}</i>
+          )}
         </div>
       );
+    }
 
     case 'keyboard':
       return (
@@ -346,8 +375,11 @@ function SourceBody({
 
 /** Shows a camera from the shared hub, keeping one stream per device. */
 function CameraView({
-  deviceId, fit, mirror, name,
-}: { deviceId?: string; fit: 'cover' | 'contain' | 'stretch'; mirror?: boolean; name: string }) {
+  deviceId, fit, mirror, zoom, panX, panY, name,
+}: {
+  deviceId?: string; fit: 'cover' | 'contain' | 'stretch'; mirror?: boolean;
+  zoom: number; panX: number; panY: number; name: string;
+}) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [status, setStatus] = useState<'idle' | 'ready' | 'error'>('idle');
 
@@ -375,9 +407,22 @@ function CameraView({
     };
   }, [deviceId]);
 
+  // Zoom is a scale about a pan-shifted origin, matching applyZoom on canvas.
+  const factor = Math.max(1, zoom);
+  const shift = (pan: number) => `${(-Math.min(1, Math.max(-1, pan)) * (factor - 1) * 50) / factor}%`;
+
   return (
     <div className="source-camera" data-fit={fit} data-mirror={mirror ? 'yes' : 'no'}>
-      <video ref={videoRef} className="source-video" muted playsInline autoPlay />
+      <video
+        ref={videoRef}
+        className="source-video"
+        muted
+        playsInline
+        autoPlay
+        style={factor > 1
+          ? { transform: `scale(${factor}) translate(${shift(panX)}, ${shift(panY)})` }
+          : undefined}
+      />
       {status !== 'ready' && (
         <span className="source-placeholder">
           <small>{status === 'error' ? 'Camera unavailable' : deviceId ? 'Starting…' : `${name}: choose a device`}</small>

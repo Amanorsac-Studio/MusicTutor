@@ -6,7 +6,8 @@
  * frame whatever size the window happens to be.
  */
 
-import { CANVAS_HEIGHT, CANVAS_WIDTH, type Source } from './scene';
+import { LANDSCAPE_CANVAS, type Source } from './scene';
+import type { CanvasSize } from './formats';
 import { isBlackKey, noteName, octaveOf, pitchClass, type Accidental } from './chords';
 import { cameraHub } from './cameraHub';
 import { findBackdrop, paintBackdrop } from './backdrops';
@@ -63,6 +64,33 @@ export function fitRect(
   }
   const dw = boxHeight * sourceRatio;
   return { sx: 0, sy: 0, sw: sourceWidth, sh: sourceHeight, dx: (boxWidth - dw) / 2, dy: 0, dw, dh: boxHeight };
+}
+
+/**
+ * Push in on a picture. `zoom` 1 shows the whole frame, 2 shows the middle
+ * half. `panX`/`panY` slide the visible window across the cropped-away area,
+ * from -1 (hard left/top) through 0 (centred) to 1.
+ */
+export function applyZoom(
+  geometry: { sx: number; sy: number; sw: number; sh: number },
+  zoom = 1,
+  panX = 0,
+  panY = 0,
+): { sx: number; sy: number; sw: number; sh: number } {
+  const factor = Math.max(1, zoom);
+  if (factor === 1) return geometry;
+  const sw = geometry.sw / factor;
+  const sh = geometry.sh / factor;
+  // The pan range is whatever the crop left over on each axis.
+  const slackX = (geometry.sw - sw) / 2;
+  const slackY = (geometry.sh - sh) / 2;
+  const clamp = (value: number) => Math.min(1, Math.max(-1, value));
+  return {
+    sx: geometry.sx + slackX + clamp(panX) * slackX,
+    sy: geometry.sy + slackY + clamp(panY) * slackY,
+    sw,
+    sh,
+  };
 }
 
 /** Wrap text to a width, honouring explicit newlines. */
@@ -207,7 +235,9 @@ function drawSource(ctx: CanvasRenderingContext2D, source: Source, context: Rend
         ctx.fillRect(0, 0, width, height);
         break;
       }
-      const geometry = fitRect(element.videoWidth, element.videoHeight, width, height, props.fit ?? 'cover');
+      const fitted = fitRect(element.videoWidth, element.videoHeight, width, height, props.fit ?? 'cover');
+      const zoomed = applyZoom(fitted, props.zoom, props.panX, props.panY);
+      const geometry = { ...fitted, ...zoomed };
       ctx.save();
       if (props.mirror) {
         ctx.translate(width, 0);
@@ -231,7 +261,8 @@ function drawSource(ctx: CanvasRenderingContext2D, source: Source, context: Rend
       }
       const naturalWidth = (image as HTMLImageElement).naturalWidth || width;
       const naturalHeight = (image as HTMLImageElement).naturalHeight || height;
-      const geometry = fitRect(naturalWidth, naturalHeight, width, height, props.fit ?? 'contain');
+      const fitted = fitRect(naturalWidth, naturalHeight, width, height, props.fit ?? 'contain');
+      const geometry = { ...fitted, ...applyZoom(fitted, props.zoom, props.panX, props.panY) };
       ctx.drawImage(
         image,
         geometry.sx, geometry.sy, geometry.sw, geometry.sh,
@@ -266,20 +297,41 @@ function drawSource(ctx: CanvasRenderingContext2D, source: Source, context: Rend
         ctx.fillStyle = props.background;
         ctx.fillRect(0, 0, width, height);
       }
-      const fontSize = props.fontSize ?? 84;
+      const mode = props.chordMode ?? 'both';
       const align = props.align ?? 'left';
       const padding = Math.min(width, height) * 0.1;
       const originX = align === 'center' ? width / 2 : align === 'right' ? width - padding : padding;
       ctx.textAlign = align;
       ctx.textBaseline = 'middle';
-      ctx.fillStyle = props.color ?? '#ffffff';
-      ctx.font = `700 ${fontSize}px Inter, system-ui, sans-serif`;
-      const symbol = context.chordSymbol || '—';
-      ctx.fillText(symbol, originX, height / 2 - (props.showRoman && context.chordNumeral ? fontSize * 0.22 : 0));
-      if (props.showRoman && context.chordNumeral) {
-        ctx.font = `700 ${fontSize * 0.42}px Inter, system-ui, sans-serif`;
+
+      const name = context.chordSymbol || '—';
+      const numeral = context.chordNumeral || '';
+      const base = props.fontSize ?? 84;
+      // The numeral can be scaled up past the chord name, for teachers who
+      // think in degrees rather than letters.
+      const numeralSize = base * Math.min(3, Math.max(0.2, props.numeralScale ?? 0.5));
+
+      const showName = mode !== 'numerals';
+      const showNumeral = mode !== 'names' && Boolean(numeral);
+
+      if (showName && showNumeral) {
+        const gap = (base + numeralSize) * 0.06;
+        const block = base + numeralSize + gap;
+        const top = height / 2 - block / 2;
+        ctx.fillStyle = props.color ?? '#ffffff';
+        ctx.font = `700 ${base}px Inter, system-ui, sans-serif`;
+        ctx.fillText(name, originX, top + base / 2);
         ctx.fillStyle = '#7fc4ff';
-        ctx.fillText(context.chordNumeral, originX, height / 2 + fontSize * 0.46);
+        ctx.font = `700 ${numeralSize}px Inter, system-ui, sans-serif`;
+        ctx.fillText(numeral, originX, top + base + gap + numeralSize / 2);
+      } else if (showNumeral) {
+        ctx.fillStyle = '#7fc4ff';
+        ctx.font = `700 ${numeralSize}px Inter, system-ui, sans-serif`;
+        ctx.fillText(numeral, originX, height / 2);
+      } else {
+        ctx.fillStyle = props.color ?? '#ffffff';
+        ctx.font = `700 ${base}px Inter, system-ui, sans-serif`;
+        ctx.fillText(name, originX, height / 2);
       }
       break;
     }
@@ -306,11 +358,12 @@ export function drawScene(
   ctx: CanvasRenderingContext2D,
   sources: Source[],
   context: RenderContext,
+  canvas: CanvasSize = LANDSCAPE_CANVAS,
   background = '#050d15',
 ): void {
   ctx.save();
   ctx.fillStyle = background;
-  ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.restore();
 
   sources.forEach(source => {

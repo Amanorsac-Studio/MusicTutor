@@ -1,17 +1,25 @@
 /**
  * Scene model.
  *
- * A scene is an ordered list of sources laid out on a fixed 1920x1080 canvas,
- * the way OBS works. Positions are stored in canvas coordinates rather than
- * screen pixels, so a scene looks identical whatever size the preview is drawn
- * at and records at full resolution regardless of the window.
+ * A scene holds one layout per output format, the way OBS holds a canvas.
+ * Landscape and portrait are genuinely different arrangements — a 16:9 lesson
+ * shot does not become a good TikTok by squashing it — so each format keeps its
+ * own source list and they can be streamed at the same time.
  *
- * Source order is bottom-to-top: sources[0] paints first, the last entry sits
- * on top.
+ * Positions are stored in the format's layout space (1920x1080 for landscape,
+ * 1080x1920 for portrait), never in screen pixels, so a scene looks identical
+ * whatever size the preview is and records correctly at any resolution.
+ *
+ * Within a layout, order is bottom-to-top: sources[0] paints first.
  */
 
+import { DEFAULT_FORMAT, getFormat, type CanvasSize, type OutputFormatId } from './formats';
+
+/** Landscape layout space. Kept for defaults and for tests. */
 export const CANVAS_WIDTH = 1920;
 export const CANVAS_HEIGHT = 1080;
+
+export const LANDSCAPE_CANVAS: CanvasSize = { width: CANVAS_WIDTH, height: CANVAS_HEIGHT };
 
 export type SourceKind = 'camera' | 'keyboard' | 'text' | 'image' | 'color' | 'chord' | 'backdrop';
 
@@ -21,6 +29,9 @@ export type SourceKind = 'camera' | 'keyboard' | 'text' | 'image' | 'color' | 'c
  * overhead strip looking down at the keys.
  */
 export type CameraRole = 'face' | 'hand' | 'other';
+
+/** How a chord readout is written. */
+export type ChordDisplayMode = 'names' | 'numerals' | 'both';
 
 export type Rect = { x: number; y: number; width: number; height: number };
 
@@ -35,6 +46,14 @@ export type SourceProps = {
   fit?: 'cover' | 'contain' | 'stretch';
   /** camera: mirror horizontally, which most teachers want for a face shot. */
   mirror?: boolean;
+  /**
+   * camera/image: push in on the picture. 1 shows the whole frame; 2 shows the
+   * middle half. Pan moves the visible window, as a fraction of the overflow,
+   * from -1 (hard left/top) through 0 (centred) to 1.
+   */
+  zoom?: number;
+  panX?: number;
+  panY?: number;
   /** text: the words, plus their styling. */
   text?: string;
   fontSize?: number;
@@ -51,9 +70,12 @@ export type SourceProps = {
   lastNote?: number;
   accent?: string;
   showLabels?: 'none' | 'c-only' | 'all';
-  /** chord: what to include in the readout. */
-  showRoman?: boolean;
-  /** shared: corner rounding in canvas pixels. */
+  /** chord: what to show and how prominently. */
+  chordMode?: ChordDisplayMode;
+  /** chord: relative size of the Roman numeral against the chord name, 0.2..3. */
+  numeralScale?: number;
+  showQuality?: boolean;
+  /** shared: corner rounding in layout pixels. */
   radius?: number;
 };
 
@@ -71,16 +93,30 @@ export type Source = {
   props: SourceProps;
 };
 
+export type SceneLayouts = Partial<Record<OutputFormatId, Source[]>>;
+
 export type Scene = {
   id: string;
   name: string;
-  sources: Source[];
+  layouts: SceneLayouts;
 };
 
 let idCounter = 0;
 /** Short unique id. Time-based so ids stay unique across reloads. */
 export const createId = (prefix: string): string =>
   `${prefix}_${Date.now().toString(36)}_${(idCounter++).toString(36)}`;
+
+/** The source list for a format, or an empty list if that format is unused. */
+export const layoutFor = (scene: Scene | undefined, format: OutputFormatId): Source[] =>
+  scene?.layouts[format] ?? [];
+
+/** Replace one format's layout, leaving the others untouched. */
+export const withLayout = (scene: Scene, format: OutputFormatId, sources: Source[]): Scene =>
+  ({ ...scene, layouts: { ...scene.layouts, [format]: sources } });
+
+/** Total sources across every format, for summarising a scene. */
+export const countSources = (scene: Scene): number =>
+  Object.values(scene.layouts).reduce((total, list) => total + (list?.length ?? 0), 0);
 
 /* ------------------------------------------------------------------ *
  * Source factories
@@ -90,53 +126,71 @@ const BASE: Omit<Source, 'id' | 'kind' | 'name' | 'props'> = {
   x: 0, y: 0, width: 960, height: 540, visible: true, locked: false, opacity: 1,
 };
 
-export function createSource(kind: SourceKind, overrides: Partial<Source> = {}): Source {
-  const defaults: Record<SourceKind, { name: string; rect: Rect; props: SourceProps }> = {
-    camera: {
-      name: 'Face camera',
-      rect: { x: 1060, y: 60, width: 800, height: 450 },
-      props: { fit: 'cover', mirror: false, radius: 18, role: 'face' },
-    },
-    backdrop: {
-      name: 'Backdrop',
-      rect: { x: 0, y: 0, width: CANVAS_WIDTH, height: CANVAS_HEIGHT },
-      props: { backdrop: 'studio', radius: 0 },
-    },
-    keyboard: {
-      name: 'Virtual keyboard',
-      // A full 88-key board is very wide; default to a full-width strip.
-      rect: { x: 60, y: 760, width: 1800, height: 260 },
-      props: { firstNote: 21, lastNote: 108, accent: '#1d9cff', showLabels: 'c-only', radius: 12 },
-    },
-    text: {
-      name: 'Text',
-      rect: { x: 80, y: 120, width: 760, height: 200 },
-      props: {
-        text: 'Lesson title', fontSize: 72, fontWeight: 700, align: 'left',
-        color: '#ffffff', lineHeight: 1.15, background: 'transparent',
-      },
-    },
-    image: {
-      name: 'Image',
-      rect: { x: 80, y: 80, width: 600, height: 400 },
-      props: { fit: 'contain', radius: 12 },
-    },
-    color: {
-      name: 'Colour block',
-      rect: { x: 0, y: 0, width: CANVAS_WIDTH, height: CANVAS_HEIGHT },
-      props: { background: '#0b1a2b', radius: 0 },
-    },
-    chord: {
-      name: 'Chord readout',
-      rect: { x: 80, y: 560, width: 520, height: 160 },
-      props: {
-        color: '#ffffff', fontSize: 84, background: 'rgba(6,16,26,0.72)',
-        showRoman: true, align: 'left', radius: 14,
-      },
-    },
-  };
+/** Default frame and styling for each kind, sized to the canvas it lands on. */
+function sourceDefaults(kind: SourceKind, canvas: CanvasSize): { name: string; rect: Rect; props: SourceProps } {
+  const { width: cw, height: ch } = canvas;
+  const margin = Math.round(Math.min(cw, ch) * 0.035);
 
-  const preset = defaults[kind];
+  switch (kind) {
+    case 'camera':
+      return {
+        name: 'Face camera',
+        rect: {
+          x: Math.round(cw * 0.55), y: margin,
+          width: Math.round(cw * 0.42), height: Math.round(cw * 0.42 * 9 / 16),
+        },
+        props: { fit: 'cover', mirror: false, radius: 18, role: 'face', zoom: 1, panX: 0, panY: 0 },
+      };
+    case 'backdrop':
+      return { name: 'Backdrop', rect: { x: 0, y: 0, width: cw, height: ch }, props: { backdrop: 'studio', radius: 0 } };
+    case 'keyboard':
+      return {
+        name: 'Virtual keyboard',
+        rect: {
+          x: margin, y: Math.round(ch - margin - ch * 0.24),
+          width: cw - margin * 2, height: Math.round(ch * 0.24),
+        },
+        props: { firstNote: 21, lastNote: 108, accent: '#1d9cff', showLabels: 'c-only', radius: 12 },
+      };
+    case 'text':
+      return {
+        name: 'Text',
+        rect: { x: margin, y: Math.round(ch * 0.11), width: Math.round(cw * 0.55), height: Math.round(ch * 0.18) },
+        props: {
+          text: 'Lesson title', fontSize: Math.round(cw * 0.037), fontWeight: 700, align: 'left',
+          color: '#ffffff', lineHeight: 1.15, background: 'transparent',
+        },
+      };
+    case 'image':
+      return {
+        name: 'Image',
+        rect: { x: margin, y: margin, width: Math.round(cw * 0.35), height: Math.round(ch * 0.35) },
+        props: { fit: 'contain', radius: 12, zoom: 1, panX: 0, panY: 0 },
+      };
+    case 'color':
+      return { name: 'Colour block', rect: { x: 0, y: 0, width: cw, height: ch }, props: { background: '#0b1a2b', radius: 0 } };
+    case 'chord':
+    default:
+      return {
+        name: 'Chord readout',
+        rect: {
+          x: margin, y: Math.round(ch * 0.52),
+          width: Math.round(cw * 0.3), height: Math.round(ch * 0.15),
+        },
+        props: {
+          color: '#ffffff', fontSize: Math.round(cw * 0.044), background: 'rgba(6,16,26,0.72)',
+          chordMode: 'both', numeralScale: 0.5, align: 'left', radius: 14,
+        },
+      };
+  }
+}
+
+export function createSource(
+  kind: SourceKind,
+  canvas: CanvasSize = LANDSCAPE_CANVAS,
+  overrides: Partial<Source> = {},
+): Source {
+  const preset = sourceDefaults(kind, canvas);
   const { props: overriddenProps, ...rest } = overrides;
   return {
     ...BASE,
@@ -151,25 +205,34 @@ export function createSource(kind: SourceKind, overrides: Partial<Source> = {}):
 }
 
 /**
- * Default frame for a camera role.
+ * Default frame for a camera role, proportioned to the canvas.
  *
- * A face shot is a 16:9 box in the upper right. A hand shot is the wide, short
- * strip an overhead camera actually produces looking down the length of a
- * keyboard, so it defaults to a letterbox across the width.
+ * A face shot is a 16:9 box in the upper area. A hand shot is the wide, short
+ * strip an overhead camera actually produces looking along a keyboard, so it
+ * spans the width.
  */
-export function cameraRoleRect(role: CameraRole): Rect {
+export function cameraRoleRect(role: CameraRole, canvas: CanvasSize = LANDSCAPE_CANVAS): Rect {
+  const { width: cw, height: ch } = canvas;
+  const margin = Math.round(Math.min(cw, ch) * 0.035);
   if (role === 'hand') {
-    return { x: 60, y: 470, width: 1800, height: 470 };
+    const width = cw - margin * 2;
+    return { x: margin, y: Math.round(ch * 0.44), width, height: Math.round(width * 0.26) };
   }
-  return { x: 1060, y: 60, width: 800, height: 450 };
+  const width = Math.round(cw * (canvas.height > canvas.width ? 0.9 : 0.42));
+  return { x: Math.round(cw - margin - width), y: margin, width, height: Math.round(width * 9 / 16) };
 }
 
 /** Build a camera source for a teaching role, shaped to suit it. */
-export function createCameraSource(role: CameraRole, deviceId?: string, name?: string): Source {
+export function createCameraSource(
+  role: CameraRole,
+  deviceId?: string,
+  name?: string,
+  canvas: CanvasSize = LANDSCAPE_CANVAS,
+): Source {
   const label = name ?? (role === 'hand' ? 'Hand camera' : role === 'face' ? 'Face camera' : 'Camera');
-  return createSource('camera', {
+  return createSource('camera', canvas, {
     name: label,
-    ...cameraRoleRect(role),
+    ...cameraRoleRect(role, canvas),
     props: {
       deviceId,
       role,
@@ -178,13 +241,14 @@ export function createCameraSource(role: CameraRole, deviceId?: string, name?: s
       // an overhead hand shot must not be, or the keyboard would run backwards.
       mirror: role === 'face',
       radius: role === 'hand' ? 10 : 18,
+      zoom: 1, panX: 0, panY: 0,
     },
   });
 }
 
 /** A new scene starts empty — the teacher builds their own layout. */
 export function createScene(name: string): Scene {
-  return { id: createId('scene'), name, sources: [] };
+  return { id: createId('scene'), name, layouts: {} };
 }
 
 /* ------------------------------------------------------------------ *
@@ -198,14 +262,14 @@ export const MIN_SIZE = 40;
 const round = (value: number) => Math.round(value);
 
 /** Keep a rect inside the canvas without changing its size. */
-export function clampToCanvas(rect: Rect): Rect {
-  const width = Math.min(rect.width, CANVAS_WIDTH);
-  const height = Math.min(rect.height, CANVAS_HEIGHT);
+export function clampToCanvas(rect: Rect, canvas: CanvasSize = LANDSCAPE_CANVAS): Rect {
+  const width = Math.min(rect.width, canvas.width);
+  const height = Math.min(rect.height, canvas.height);
   return {
     width,
     height,
-    x: Math.max(0, Math.min(CANVAS_WIDTH - width, rect.x)),
-    y: Math.max(0, Math.min(CANVAS_HEIGHT - height, rect.y)),
+    x: Math.max(0, Math.min(canvas.width - width, rect.x)),
+    y: Math.max(0, Math.min(canvas.height - height, rect.y)),
   };
 }
 
@@ -259,19 +323,19 @@ export type SnapGuide = { axis: 'x' | 'y'; position: number };
 export function snapRect(
   rect: Rect,
   others: Rect[],
+  canvas: CanvasSize = LANDSCAPE_CANVAS,
   threshold = 12,
 ): { rect: Rect; guides: SnapGuide[] } {
   const guides: SnapGuide[] = [];
   let { x, y } = rect;
 
-  const verticalTargets = [0, CANVAS_WIDTH / 2, CANVAS_WIDTH];
-  const horizontalTargets = [0, CANVAS_HEIGHT / 2, CANVAS_HEIGHT];
+  const verticalTargets = [0, canvas.width / 2, canvas.width];
+  const horizontalTargets = [0, canvas.height / 2, canvas.height];
   others.forEach(other => {
     verticalTargets.push(other.x, other.x + other.width / 2, other.x + other.width);
     horizontalTargets.push(other.y, other.y + other.height / 2, other.y + other.height);
   });
 
-  // Each edge of the moving rect can land on any target.
   const xEdges = [
     { offset: 0, value: rect.x },
     { offset: rect.width / 2, value: rect.x + rect.width / 2 },
@@ -333,10 +397,10 @@ export function hitTest(sources: Source[], x: number, y: number): Source | null 
 
 export type ReorderDirection = 'up' | 'down' | 'top' | 'bottom';
 
-export function reorder(sources: Source[], id: string, direction: ReorderDirection): Source[] {
-  const index = sources.findIndex(source => source.id === id);
-  if (index < 0) return sources;
-  const next = [...sources];
+/** Move an item within a list. Works for both sources and scenes. */
+export function reorderBy<T>(items: T[], index: number, direction: ReorderDirection): T[] {
+  if (index < 0 || index >= items.length) return items;
+  const next = [...items];
   const [item] = next.splice(index, 1);
   const target =
     direction === 'top' ? next.length
@@ -347,15 +411,22 @@ export function reorder(sources: Source[], id: string, direction: ReorderDirecti
   return next;
 }
 
+export function reorder(sources: Source[], id: string, direction: ReorderDirection): Source[] {
+  const index = sources.findIndex(source => source.id === id);
+  if (index < 0) return sources;
+  return reorderBy(sources, index, direction);
+}
+
 /** Stretch a source to fill the whole canvas. */
-export const fillCanvas = (): Rect => ({ x: 0, y: 0, width: CANVAS_WIDTH, height: CANVAS_HEIGHT });
+export const fillCanvas = (canvas: CanvasSize = LANDSCAPE_CANVAS): Rect =>
+  ({ x: 0, y: 0, width: canvas.width, height: canvas.height });
 
 /** Centre a rect without resizing it. */
-export function centreRect(rect: Rect): Rect {
+export function centreRect(rect: Rect, canvas: CanvasSize = LANDSCAPE_CANVAS): Rect {
   return {
     ...rect,
-    x: round((CANVAS_WIDTH - rect.width) / 2),
-    y: round((CANVAS_HEIGHT - rect.height) / 2),
+    x: round((canvas.width - rect.width) / 2),
+    y: round((canvas.height - rect.height) / 2),
   };
 }
 
@@ -363,11 +434,41 @@ export function centreRect(rect: Rect): Rect {
  * Scale a rect to fit the canvas while keeping `ratio` (width / height),
  * then centre it — the equivalent of "Fit to screen".
  */
-export function fitToCanvas(ratio: number): Rect {
-  const canvasRatio = CANVAS_WIDTH / CANVAS_HEIGHT;
-  const width = ratio >= canvasRatio ? CANVAS_WIDTH : round(CANVAS_HEIGHT * ratio);
-  const height = ratio >= canvasRatio ? round(CANVAS_WIDTH / ratio) : CANVAS_HEIGHT;
-  return centreRect({ x: 0, y: 0, width, height });
+export function fitToCanvas(ratio: number, canvas: CanvasSize = LANDSCAPE_CANVAS): Rect {
+  const canvasRatio = canvas.width / canvas.height;
+  const width = ratio >= canvasRatio ? canvas.width : round(canvas.height * ratio);
+  const height = ratio >= canvasRatio ? round(canvas.width / ratio) : canvas.height;
+  return centreRect({ x: 0, y: 0, width, height }, canvas);
+}
+
+/**
+ * Proportionally re-fit a layout built for one canvas onto another. Used when
+ * seeding a format's layout from an existing one, so a portrait version starts
+ * from the landscape arrangement rather than from nothing.
+ */
+export function rescaleLayout(sources: Source[], from: CanvasSize, to: CanvasSize): Source[] {
+  // Use the smaller axis ratio so nothing grows off the canvas.
+  const scale = Math.min(to.width / from.width, to.height / from.height);
+  return sources.map(source => {
+    const width = Math.max(MIN_SIZE, round(source.width * scale));
+    const height = Math.max(MIN_SIZE, round(source.height * scale));
+    // Keep each source's relative position, then clamp it into the new frame.
+    const centreX = (source.x + source.width / 2) / from.width;
+    const centreY = (source.y + source.height / 2) / from.height;
+    return {
+      ...source,
+      ...clampToCanvas({
+        x: round(centreX * to.width - width / 2),
+        y: round(centreY * to.height - height / 2),
+        width, height,
+      }, to),
+      props: {
+        ...source.props,
+        // Font sizes are in layout units, so they scale with the canvas too.
+        ...(source.props.fontSize ? { fontSize: Math.max(8, round(source.props.fontSize * scale)) } : {}),
+      },
+    };
+  });
 }
 
 /* ------------------------------------------------------------------ *
@@ -377,41 +478,69 @@ export function fitToCanvas(ratio: number): Rect {
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
 
-/** Rebuild a scene list from stored JSON, discarding anything malformed. */
+const VALID_KINDS: SourceKind[] = ['camera', 'keyboard', 'text', 'image', 'color', 'chord', 'backdrop'];
+
+function normalizeSource(item: unknown): Source | null {
+  if (!item || typeof item !== 'object') return null;
+  const source = item as Partial<Source>;
+  if (typeof source.kind !== 'string' || !VALID_KINDS.includes(source.kind as SourceKind)) return null;
+  if (!isFiniteNumber(source.x) || !isFiniteNumber(source.y)) return null;
+  if (!isFiniteNumber(source.width) || !isFiniteNumber(source.height)) return null;
+  return {
+    id: typeof source.id === 'string' ? source.id : createId(source.kind),
+    kind: source.kind as SourceKind,
+    name: typeof source.name === 'string' ? source.name : source.kind,
+    x: source.x,
+    y: source.y,
+    width: Math.max(MIN_SIZE, source.width),
+    height: Math.max(MIN_SIZE, source.height),
+    visible: source.visible !== false,
+    locked: source.locked === true,
+    opacity: isFiniteNumber(source.opacity) ? Math.min(1, Math.max(0, source.opacity)) : 1,
+    props: (source.props && typeof source.props === 'object' ? source.props : {}) as SourceProps,
+  };
+}
+
+/**
+ * Rebuild a scene list from stored JSON, discarding anything malformed.
+ *
+ * Scenes saved before per-format layouts carried a flat `sources` array; those
+ * are read in as the landscape layout so existing work is not lost.
+ */
 export function normalizeScenes(raw: unknown): Scene[] {
   if (!Array.isArray(raw)) return [];
   const scenes: Scene[] = [];
+
   raw.forEach(entry => {
     if (!entry || typeof entry !== 'object') return;
-    const candidate = entry as Partial<Scene>;
+    const candidate = entry as Partial<Scene> & { sources?: unknown };
     if (typeof candidate.name !== 'string') return;
-    const sources: Source[] = [];
-    (Array.isArray(candidate.sources) ? candidate.sources : []).forEach(item => {
-      if (!item || typeof item !== 'object') return;
-      const source = item as Partial<Source>;
-      if (typeof source.kind !== 'string') return;
-      if (!['camera', 'keyboard', 'text', 'image', 'color', 'chord', 'backdrop'].includes(source.kind)) return;
-      if (!isFiniteNumber(source.x) || !isFiniteNumber(source.y)) return;
-      if (!isFiniteNumber(source.width) || !isFiniteNumber(source.height)) return;
-      sources.push({
-        id: typeof source.id === 'string' ? source.id : createId(source.kind),
-        kind: source.kind as SourceKind,
-        name: typeof source.name === 'string' ? source.name : source.kind,
-        x: source.x,
-        y: source.y,
-        width: Math.max(MIN_SIZE, source.width),
-        height: Math.max(MIN_SIZE, source.height),
-        visible: source.visible !== false,
-        locked: source.locked === true,
-        opacity: isFiniteNumber(source.opacity) ? Math.min(1, Math.max(0, source.opacity)) : 1,
-        props: (source.props && typeof source.props === 'object' ? source.props : {}) as SourceProps,
+
+    const layouts: SceneLayouts = {};
+
+    if (candidate.layouts && typeof candidate.layouts === 'object') {
+      Object.entries(candidate.layouts as Record<string, unknown>).forEach(([formatId, list]) => {
+        if (!Array.isArray(list)) return;
+        if (getFormat(formatId).id !== formatId) return;
+        layouts[formatId as OutputFormatId] = list
+          .map(normalizeSource)
+          .filter((source): source is Source => source !== null);
       });
-    });
+    }
+
+    // Legacy flat layout.
+    if (!Object.keys(layouts).length && Array.isArray(candidate.sources)) {
+      layouts[DEFAULT_FORMAT] = candidate.sources
+        .map(normalizeSource)
+        .filter((source): source is Source => source !== null);
+    }
+
     scenes.push({
       id: typeof candidate.id === 'string' ? candidate.id : createId('scene'),
       name: candidate.name,
-      sources,
+      layouts,
     });
   });
+
   return scenes;
 }

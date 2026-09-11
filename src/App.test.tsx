@@ -145,6 +145,13 @@ describe('mixer', () => {
   });
 });
 
+/** Sources counted in the active format's layout, read from the scene row. */
+function layoutCount(): number {
+  const row = document.querySelector('.scene-row small');
+  const match = row?.textContent?.match(/^(\d+) source/);
+  return match ? Number(match[1]) : -1;
+}
+
 /**
  * Add a source to the starting scene. The button stays disabled until the
  * stored scenes have loaded, so wait for that rather than racing it.
@@ -159,13 +166,13 @@ describe('scene editing', () => {
   it('starts with one empty scene rather than built-in layouts', async () => {
     render(<App />);
     expect(await screen.findByText(/Empty scene/)).toBeInTheDocument();
-    expect(screen.getByText(/0 sources/)).toBeInTheDocument();
+    expect(layoutCount()).toBe(0);
   });
 
   it('adds a source and lists it as a layer', async () => {
     render(<App />);
     await addSource(/Piano keyboard/);
-    await waitFor(() => expect(screen.getByText('1 source')).toBeInTheDocument());
+    await waitFor(() => expect(layoutCount()).toBe(1));
     expect(screen.getByRole('button', { name: /Hide Virtual keyboard/ })).toBeInTheDocument();
   });
 
@@ -181,7 +188,7 @@ describe('scene editing', () => {
     render(<App />);
     await addSource(/Colour block/);
     fireEvent.click(await screen.findByRole('button', { name: /Remove source/ }));
-    await waitFor(() => expect(screen.getByText('0 sources')).toBeInTheDocument());
+    await waitFor(() => expect(layoutCount()).toBe(0));
   });
 
   it('hides a source without deleting it', async () => {
@@ -190,7 +197,7 @@ describe('scene editing', () => {
     const hide = await screen.findByRole('button', { name: /Hide Virtual keyboard/ });
     fireEvent.click(hide);
     await waitFor(() => expect(screen.getByRole('button', { name: /Show Virtual keyboard/ })).toBeInTheDocument());
-    expect(screen.getByText('1 source')).toBeInTheDocument();
+    expect(layoutCount()).toBe(1);
   });
 });
 
@@ -205,7 +212,7 @@ describe('Devices and Tutorial stay in step', () => {
 
     // Back in the Tutorial, the camera is a real source on the canvas.
     fireEvent.click(screen.getByRole('button', { name: /^Tutorial$/ }));
-    await waitFor(() => expect(screen.getByText('1 source')).toBeInTheDocument());
+    await waitFor(() => expect(layoutCount()).toBe(1));
     expect(screen.getByRole('button', { name: /Hide Face camera/ })).toBeInTheDocument();
   });
 
@@ -230,6 +237,119 @@ describe('Devices and Tutorial stay in step', () => {
     const width = Number((screen.getByLabelText('Hand camera W') as HTMLInputElement).value);
     const height = Number((screen.getByLabelText('Hand camera H') as HTMLInputElement).value);
     expect(width).toBeGreaterThan(height * 2);
+  });
+});
+
+describe('output formats', () => {
+  it('offers landscape, portrait and square', async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /Landscape/ })).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: /Portrait/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Square/ })).toBeInTheDocument();
+  });
+
+  it('keeps a separate layout per format', async () => {
+    render(<App />);
+    await addSource(/Piano keyboard/);
+    await waitFor(() => expect(layoutCount()).toBe(1));
+
+    // Portrait starts empty — it is its own arrangement, not a squashed copy.
+    fireEvent.click(screen.getByRole('button', { name: /Portrait/ }));
+    await waitFor(() => expect(layoutCount()).toBe(0));
+    expect(screen.getByText(/No sources in the portrait layout/)).toBeInTheDocument();
+
+    // Switching back finds the landscape work intact.
+    fireEvent.click(screen.getByRole('button', { name: /Landscape/ }));
+    await waitFor(() => expect(layoutCount()).toBe(1));
+  });
+
+  it('can seed one format from another', async () => {
+    render(<App />);
+    await addSource(/Piano keyboard/);
+    await waitFor(() => expect(layoutCount()).toBe(1));
+    fireEvent.click(screen.getByRole('button', { name: /Portrait/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Start from the landscape layout/ }));
+    await waitFor(() => expect(layoutCount()).toBe(1));
+  });
+
+  it('reshapes the canvas when the format changes', async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByText(/1920 × 1080/)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /Portrait/ }));
+    await waitFor(() => expect(screen.getByText(/1080 × 1920/)).toBeInTheDocument());
+  });
+});
+
+describe('scene ordering', () => {
+  it('moves a scene up and down the running order', async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add scene' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Add scene' }));
+    await waitFor(() => expect(screen.getAllByRole('button', { name: /^Move / })).toHaveLength(4));
+
+    const names = () => [...document.querySelectorAll('.scene-row input')]
+      .map(input => (input as HTMLInputElement).value);
+    const before = names();
+    fireEvent.click(screen.getAllByRole('button', { name: /Move .* up/ })[1]);
+    await waitFor(() => expect(names()).toEqual([before[1], before[0]]));
+  });
+
+  it('disables moving past the ends', async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /Move .* up/ })).toBeDisabled());
+    expect(screen.getByRole('button', { name: /Move .* down/ })).toBeDisabled();
+  });
+});
+
+describe('chord readout options', () => {
+  it('can show names, numbers, or both', async () => {
+    render(<App />);
+    await addSource(/Chord readout/);
+    const mode = await screen.findByLabelText('Chord display');
+    expect(mode).toHaveValue('both');
+    fireEvent.change(mode, { target: { value: 'numerals' } });
+    // Choosing numbers reveals the size control for them.
+    expect(await screen.findByLabelText('Number size')).toBeInTheDocument();
+    fireEvent.change(mode, { target: { value: 'names' } });
+    await waitFor(() => expect(screen.queryByLabelText('Number size')).not.toBeInTheDocument());
+  });
+
+  it('can make the numbers larger than the chord name', async () => {
+    render(<App />);
+    await addSource(/Chord readout/);
+    const size = await screen.findByLabelText('Number size');
+    fireEvent.change(size, { target: { value: '180' } });
+    await waitFor(() => expect(screen.getByLabelText('Number size')).toHaveValue('180'));
+  });
+});
+
+describe('key bar', () => {
+  it('sets the key from under the canvas', async () => {
+    render(<App />);
+    const keyG = await screen.findByRole('button', { name: 'G' });
+    fireEvent.click(keyG);
+    await waitFor(() => expect(keyG).toHaveAttribute('aria-pressed', 'true'));
+    // The scale readout follows the chosen key.
+    expect(screen.getByLabelText('Notes in this key')).toHaveTextContent('G A B C D E F#');
+  });
+
+  it('switches between major and minor', async () => {
+    render(<App />);
+    const minor = await screen.findByRole('button', { name: 'minor' });
+    fireEvent.click(minor);
+    await waitFor(() => expect(minor).toHaveAttribute('aria-pressed', 'true'));
+  });
+});
+
+describe('source zoom', () => {
+  it('offers zoom on a camera, with pan once zoomed in', async () => {
+    render(<App />);
+    await addSource(/^Face camera$/);
+    const zoom = await screen.findByLabelText('Zoom');
+    expect(screen.queryByLabelText('Pan horizontally')).not.toBeInTheDocument();
+    fireEvent.change(zoom, { target: { value: '200' } });
+    expect(await screen.findByLabelText('Pan horizontally')).toBeInTheDocument();
+    expect(screen.getByLabelText('Pan vertically')).toBeInTheDocument();
   });
 });
 

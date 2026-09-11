@@ -10,6 +10,7 @@
 import { audioEngine } from './audioEngine';
 import { MidiRecorder } from './midiFile';
 import { sceneCompositor } from './compositor';
+import { bitrateFor, type QualityLevel } from './formats';
 
 export type RecordingQuality = {
   width: number;
@@ -55,6 +56,8 @@ export type RecordingResult = {
   durationMs: number;
   mimeType: string;
   midiEvents: number;
+  width: number;
+  height: number;
 };
 
 export class LessonRecorder {
@@ -64,6 +67,8 @@ export class LessonRecorder {
   private mixedStream?: MediaStream;
   private startedAt = 0;
   private state: RecorderState = 'idle';
+  /** Pixel size of the take in progress, for reporting. */
+  private outputSize = { width: 0, height: 0 };
   readonly midi = new MidiRecorder();
 
   get status(): RecorderState {
@@ -86,9 +91,17 @@ export class LessonRecorder {
    * the file contains only the 1920x1080 composition — no panels, no toolbar,
    * and at full resolution however small the window is.
    */
-  async start(options: { quality?: RecordingQuality; recordAudio?: boolean; recordMidi?: boolean } = {}): Promise<void> {
+  async start(options: {
+    quality?: RecordingQuality;
+    /** Bitrate level; combined with the real picture size. */
+    level?: QualityLevel;
+    frameRate?: number;
+    recordAudio?: boolean;
+    recordMidi?: boolean;
+  } = {}): Promise<void> {
     if (this.state !== 'idle') throw new Error('A recording is already in progress.');
     const quality = options.quality ?? QUALITY_PRESETS['1080p30'];
+    const frameRate = options.frameRate ?? quality.frameRate;
     const recordAudio = options.recordAudio ?? true;
 
     if (typeof MediaRecorder === 'undefined') {
@@ -99,8 +112,8 @@ export class LessonRecorder {
     try {
       // Keep the compositor painting at the recording frame rate for the
       // duration of the take.
-      sceneCompositor.start(quality.frameRate);
-      const canvasStream = sceneCompositor.captureStream(quality.frameRate);
+      sceneCompositor.start(frameRate);
+      const canvasStream = sceneCompositor.captureStream(frameRate);
       const videoTracks = canvasStream.getVideoTracks();
       if (!videoTracks.length) throw new Error('The scene canvas produced no video.');
       this.canvasStream = canvasStream;
@@ -122,11 +135,21 @@ export class LessonRecorder {
       this.mixedStream = new MediaStream(tracks);
       this.chunks = [];
 
+      // Budget the bitrate from the picture actually being produced rather than
+      // a fixed table, so quality holds at any format and resolution.
+      const size = sceneCompositor.outputSize;
+      const videoBitsPerSecond = options.level
+        ? bitrateFor(size, frameRate, options.level)
+        : quality.videoBitsPerSecond;
+
       const mimeType = pickMimeType();
       this.recorder = new MediaRecorder(
         this.mixedStream,
-        mimeType ? { mimeType, videoBitsPerSecond: quality.videoBitsPerSecond } : undefined,
+        mimeType
+          ? { mimeType, videoBitsPerSecond, audioBitsPerSecond: 256_000 }
+          : undefined,
       );
+      this.outputSize = size;
       this.recorder.ondataavailable = event => {
         if (event.data && event.data.size) this.chunks.push(event.data);
       };
@@ -148,7 +171,7 @@ export class LessonRecorder {
    */
   async stop(name: string): Promise<RecordingResult> {
     if (this.state !== 'recording' || !this.recorder) {
-      return { bytes: 0, durationMs: 0, mimeType: '', midiEvents: 0 };
+      return { bytes: 0, durationMs: 0, mimeType: '', midiEvents: 0, width: 0, height: 0 };
     }
     this.state = 'stopping';
     const recorder = this.recorder;
@@ -182,7 +205,11 @@ export class LessonRecorder {
       }
     }
 
-    return { videoPath, midiPath, bytes: buffer.byteLength, durationMs, mimeType, midiEvents: midiEvents.length };
+    return {
+      videoPath, midiPath, bytes: buffer.byteLength, durationMs, mimeType,
+      midiEvents: midiEvents.length,
+      width: this.outputSize.width, height: this.outputSize.height,
+    };
   }
 
   /** Abandon a recording without saving. */

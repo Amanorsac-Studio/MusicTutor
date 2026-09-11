@@ -7,8 +7,15 @@ import { QUALITY_PRESETS } from './recorder';
 import { normalizeScenes, type Scene } from './scene';
 
 export type AppSettings = {
-  /** Key into QUALITY_PRESETS. */
+  /** Key into QUALITY_PRESETS. Retained for older saved settings. */
   quality: keyof typeof QUALITY_PRESETS | string;
+  /** Recording resolution, as a scale of the format layout space. */
+  resolution: string;
+  /** Bitrate level. */
+  videoQuality: string;
+  frameRate: number;
+  /** Last edited output format. */
+  outputFormat: string;
   recordAudio: boolean;
   recordMidi: boolean;
   autosave: boolean;
@@ -39,6 +46,10 @@ export type AppSettings = {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   quality: '1080p30',
+  resolution: 'full',
+  videoQuality: 'balanced',
+  frameRate: 30,
+  outputFormat: 'landscape',
   recordAudio: true,
   recordMidi: true,
   autosave: true,

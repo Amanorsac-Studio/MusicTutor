@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  CANVAS_HEIGHT, CANVAS_WIDTH, MIN_SIZE, clampToCanvas, centreRect, createScene,
-  createSource, fitToCanvas, hitTest, normalizeScenes, reorder, resizeRect, snapRect,
+  CANVAS_HEIGHT, CANVAS_WIDTH, LANDSCAPE_CANVAS, MIN_SIZE, clampToCanvas, centreRect,
+  countSources, createScene, createSource, fitToCanvas, hitTest, layoutFor, normalizeScenes,
+  rescaleLayout, reorder, resizeRect, snapRect, withLayout,
   type Rect, type Source,
 } from './scene';
 
@@ -20,20 +21,40 @@ describe('source creation', () => {
   });
 
   it('merges overridden props without dropping the defaults', () => {
-    const camera = createSource('camera', { props: { deviceId: 'cam-1' } });
+    const camera = createSource('camera', LANDSCAPE_CANVAS, { props: { deviceId: 'cam-1' } });
     expect(camera.props.deviceId).toBe('cam-1');
     expect(camera.props.fit).toBe('cover');
   });
 
   it('accepts positional overrides', () => {
-    const source = createSource('text', { x: 100, y: 200, width: 300, height: 50 });
+    const source = createSource('text', LANDSCAPE_CANVAS, { x: 100, y: 200, width: 300, height: 50 });
     expect(source).toMatchObject({ x: 100, y: 200, width: 300, height: 50 });
   });
 });
 
 describe('new scenes', () => {
   it('starts empty so the teacher builds their own layout', () => {
-    expect(createScene('My lesson').sources).toEqual([]);
+    const scene = createScene('My lesson');
+    expect(scene.layouts).toEqual({});
+    expect(layoutFor(scene, 'landscape')).toEqual([]);
+    expect(countSources(scene)).toBe(0);
+  });
+
+  it('keeps landscape and portrait layouts apart', () => {
+    let scene = createScene('Dual');
+    scene = withLayout(scene, 'landscape', [createSource('keyboard')]);
+    scene = withLayout(scene, 'portrait', [createSource('text'), createSource('chord')]);
+    expect(layoutFor(scene, 'landscape')).toHaveLength(1);
+    expect(layoutFor(scene, 'portrait')).toHaveLength(2);
+    expect(countSources(scene)).toBe(3);
+  });
+
+  it('editing one format leaves the other untouched', () => {
+    let scene = createScene('Dual');
+    scene = withLayout(scene, 'landscape', [createSource('keyboard')]);
+    const before = layoutFor(scene, 'landscape');
+    scene = withLayout(scene, 'portrait', [createSource('text')]);
+    expect(layoutFor(scene, 'landscape')).toBe(before);
   });
 });
 
@@ -127,7 +148,7 @@ describe('snapRect', () => {
 });
 
 describe('hitTest', () => {
-  const build = (over: Partial<Source>): Source => createSource('color', over);
+  const build = (over: Partial<Source>): Source => createSource('color', LANDSCAPE_CANVAS, over);
   const bottom = build({ x: 0, y: 0, width: 500, height: 500 });
   const top = build({ x: 100, y: 100, width: 200, height: 200 });
 
@@ -152,7 +173,7 @@ describe('hitTest', () => {
 });
 
 describe('reorder', () => {
-  const make = (name: string) => createSource('text', { name });
+  const make = (name: string) => createSource('text', LANDSCAPE_CANVAS, { name });
   const a = make('a'); const b = make('b'); const c = make('c');
   const list = [a, b, c];
 
@@ -202,45 +223,118 @@ describe('normalizeScenes', () => {
     expect(normalizeScenes({})).toEqual([]);
   });
 
-  it('round-trips a real scene', () => {
-    const scene = createScene('Lesson');
-    scene.sources.push(createSource('keyboard'), createSource('camera'));
+  it('round-trips a scene with two format layouts', () => {
+    let scene = createScene('Lesson');
+    scene = withLayout(scene, 'landscape', [createSource('keyboard'), createSource('camera')]);
+    scene = withLayout(scene, 'portrait', [createSource('text')]);
     const [restored] = normalizeScenes(JSON.parse(JSON.stringify([scene])));
     expect(restored.name).toBe('Lesson');
-    expect(restored.sources.map(s => s.kind)).toEqual(['keyboard', 'camera']);
-    expect(restored.sources[0].props.firstNote).toBe(21);
+    expect(layoutFor(restored, 'landscape').map(s => s.kind)).toEqual(['keyboard', 'camera']);
+    expect(layoutFor(restored, 'portrait').map(s => s.kind)).toEqual(['text']);
+    expect(layoutFor(restored, 'landscape')[0].props.firstNote).toBe(21);
+  });
+
+  it('reads a pre-format scene into the landscape layout', () => {
+    // Scenes saved before per-format layouts had a flat sources array.
+    const [restored] = normalizeScenes([{
+      name: 'Old scene',
+      sources: [{ kind: 'keyboard', x: 0, y: 0, width: 800, height: 200 }],
+    }]);
+    expect(layoutFor(restored, 'landscape')).toHaveLength(1);
+    expect(layoutFor(restored, 'portrait')).toEqual([]);
+  });
+
+  it('drops an unknown format', () => {
+    const [restored] = normalizeScenes([{
+      name: 'Odd',
+      layouts: { landscape: [{ kind: 'text', x: 0, y: 0, width: 100, height: 100 }], hologram: [] },
+    }]);
+    expect(Object.keys(restored.layouts)).toEqual(['landscape']);
   });
 
   it('drops sources with a bad kind or missing geometry', () => {
     const [restored] = normalizeScenes([{
       name: 'Mixed',
-      sources: [
-        { kind: 'camera', x: 0, y: 0, width: 100, height: 100 },
-        { kind: 'wormhole', x: 0, y: 0, width: 100, height: 100 },
-        { kind: 'text', x: 'left', y: 0, width: 100, height: 100 },
-        { kind: 'text', x: 0, y: 0 },
-      ],
+      layouts: {
+        landscape: [
+          { kind: 'camera', x: 0, y: 0, width: 100, height: 100 },
+          { kind: 'wormhole', x: 0, y: 0, width: 100, height: 100 },
+          { kind: 'text', x: 'left', y: 0, width: 100, height: 100 },
+          { kind: 'text', x: 0, y: 0 },
+        ],
+      },
     }]);
-    expect(restored.sources).toHaveLength(1);
-    expect(restored.sources[0].kind).toBe('camera');
+    expect(layoutFor(restored, 'landscape')).toHaveLength(1);
+    expect(layoutFor(restored, 'landscape')[0].kind).toBe('camera');
   });
 
   it('preserves layer order', () => {
-    const scene = createScene('Ordered');
-    scene.sources.push(
-      createSource('color', { name: 'back' }),
-      createSource('text', { name: 'front' }),
-    );
+    let scene = createScene('Ordered');
+    scene = withLayout(scene, 'landscape', [
+      createSource('color', LANDSCAPE_CANVAS, { name: 'back' }),
+      createSource('text', LANDSCAPE_CANVAS, { name: 'front' }),
+    ]);
     const [restored] = normalizeScenes([scene]);
-    expect(restored.sources.map(s => s.name)).toEqual(['back', 'front']);
+    expect(layoutFor(restored, 'landscape').map(s => s.name)).toEqual(['back', 'front']);
   });
 
   it('clamps opacity and enforces a minimum size', () => {
     const [restored] = normalizeScenes([{
       name: 'Odd',
-      sources: [{ kind: 'text', x: 0, y: 0, width: 1, height: 1, opacity: 7 }],
+      layouts: { landscape: [{ kind: 'text', x: 0, y: 0, width: 1, height: 1, opacity: 7 }] },
     }]);
-    expect(restored.sources[0].opacity).toBe(1);
-    expect(restored.sources[0].width).toBe(MIN_SIZE);
+    const source = layoutFor(restored, 'landscape')[0];
+    expect(source.opacity).toBe(1);
+    expect(source.width).toBe(MIN_SIZE);
+  });
+});
+
+describe('rescaleLayout', () => {
+  const landscape = { width: 1920, height: 1080 };
+  const portrait = { width: 1080, height: 1920 };
+
+  it('keeps every source inside the new canvas', () => {
+    const sources = [
+      createSource('keyboard', landscape),
+      createSource('camera', landscape),
+      createSource('text', landscape),
+    ];
+    rescaleLayout(sources, landscape, portrait).forEach(source => {
+      expect(source.x).toBeGreaterThanOrEqual(0);
+      expect(source.y).toBeGreaterThanOrEqual(0);
+      expect(source.x + source.width).toBeLessThanOrEqual(portrait.width);
+      expect(source.y + source.height).toBeLessThanOrEqual(portrait.height);
+    });
+  });
+
+  it('shrinks a full-width source to the narrower canvas', () => {
+    const wide = createSource('keyboard', landscape);
+    const [scaled] = rescaleLayout([wide], landscape, portrait);
+    expect(scaled.width).toBeLessThan(wide.width);
+  });
+
+  it('scales font sizes with the canvas', () => {
+    const text = createSource('text', landscape);
+    const [scaled] = rescaleLayout([text], landscape, portrait);
+    expect(scaled.props.fontSize).toBeLessThan(text.props.fontSize!);
+    expect(scaled.props.fontSize).toBeGreaterThan(0);
+  });
+
+  it('is a no-op between identical canvases', () => {
+    const source = createSource('text', landscape, { x: 100, y: 100, width: 400, height: 200 });
+    const [same] = rescaleLayout([source], landscape, landscape);
+    expect(same).toMatchObject({ x: 100, y: 100, width: 400, height: 200 });
+  });
+
+  it('keeps the source count and order', () => {
+    const sources = [createSource('color', landscape), createSource('text', landscape)];
+    const scaled = rescaleLayout(sources, landscape, portrait);
+    expect(scaled.map(s => s.kind)).toEqual(['color', 'text']);
+  });
+
+  it('never shrinks below the minimum size', () => {
+    const tiny = createSource('text', landscape, { width: MIN_SIZE, height: MIN_SIZE });
+    const [scaled] = rescaleLayout([tiny], landscape, { width: 100, height: 100 });
+    expect(scaled.width).toBeGreaterThanOrEqual(MIN_SIZE);
   });
 });

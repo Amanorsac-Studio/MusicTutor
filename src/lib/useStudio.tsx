@@ -17,8 +17,12 @@ import {
   DEFAULT_SETTINGS, loadScenes, loadSettings, savePersisted, saveSettings, type AppSettings,
 } from './settings';
 import {
-  createId, createScene, createSource, type Scene, type Source, type SourceKind,
+  createId, createScene, createSource, layoutFor, rescaleLayout, reorderBy, withLayout,
+  type Scene, type Source, type SourceKind,
 } from './scene';
+import {
+  getFormat, getResolution, renderSize, type OutputFormatId, type QualityLevel,
+} from './formats';
 import { sceneCompositor } from './compositor';
 import { INPUT_SLOTS } from './inputs';
 import { detectChord, romanNumeral } from './chords';
@@ -42,9 +46,20 @@ export type StudioValue = {
   /** Choose which input channel drives the ducking sidechain. */
   setDuckingTrigger: (id: string) => void;
 
+  /** The output shape being edited and recorded. */
+  format: OutputFormatId;
+  setFormat: (id: OutputFormatId) => void;
+  /** Layout space for the current format. */
+  canvasSize: { width: number; height: number };
+  /** Copy another format's arrangement into the current one, rescaled. */
+  seedLayoutFrom: (from: OutputFormatId) => void;
+
   scenes: Scene[];
   activeSceneId: string;
   activeScene: Scene | undefined;
+  /** Sources of the active scene in the current format. */
+  sources: Source[];
+  reorderScene: (id: string, direction: 'up' | 'down') => void;
   selectScene: (id: string) => void;
   addScene: (name?: string) => string;
   duplicateScene: (id: string) => void;
@@ -92,6 +107,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
 
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [activeSceneId, setActiveSceneId] = useState('');
+  const [format, setFormatState] = useState<OutputFormatId>('landscape');
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
 
   const { catalog, refresh } = useDeviceCatalog();
@@ -101,6 +117,18 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const activeScene = scenes.find(scene => scene.id === activeSceneId);
   const activeSceneRef = useRef(activeScene);
   activeSceneRef.current = activeScene;
+
+  const canvasSize = useMemo(() => {
+    const spec = getFormat(format);
+    return { width: spec.width, height: spec.height };
+  }, [format]);
+  const canvasSizeRef = useRef(canvasSize);
+  canvasSizeRef.current = canvasSize;
+
+  const formatRef = useRef(format);
+  formatRef.current = format;
+
+  const sources = layoutFor(activeScene, format);
 
   /* -------------------------------------------------- settings ------- */
 
@@ -160,12 +188,13 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const duplicateScene = useCallback((id: string) => {
     const original = scenesRef.current.find(scene => scene.id === id);
     if (!original) return;
-    const copy: Scene = {
-      id: createId('scene'),
-      name: `${original.name} copy`,
-      // Fresh ids so the two scenes never share a source.
-      sources: original.sources.map(source => ({ ...source, id: createId(source.kind), props: { ...source.props } })),
-    };
+    const layouts: Scene['layouts'] = {};
+    // Fresh ids so the two scenes never share a source, across every format.
+    (Object.keys(original.layouts) as OutputFormatId[]).forEach(formatId => {
+      layouts[formatId] = (original.layouts[formatId] ?? []).map(source =>
+        ({ ...source, id: createId(source.kind), props: { ...source.props } }));
+    });
+    const copy: Scene = { id: createId('scene'), name: `${original.name} copy`, layouts };
     setScenes(current => [...current, copy]);
     setActiveSceneId(copy.id);
   }, []);
@@ -183,22 +212,54 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     setSelectedSourceId(null);
   }, []);
 
-  const setSceneSources = useCallback((sources: Source[]) => {
+  const setSceneSources = useCallback((next: Source[]) => {
     setScenes(current => current.map(scene =>
-      (scene.id === activeSceneIdRef.current ? { ...scene, sources } : scene)));
+      (scene.id === activeSceneIdRef.current ? withLayout(scene, formatRef.current, next) : scene)));
+  }, []);
+
+  /** Move a scene in the list, so the running order is the teacher's choice. */
+  const reorderScene = useCallback((id: string, direction: 'up' | 'down') => {
+    setScenes(current => {
+      const index = current.findIndex(scene => scene.id === id);
+      if (index < 0) return current;
+      // The list reads top-down, so "up" means earlier.
+      return reorderBy(current, index, direction === 'up' ? 'down' : 'up');
+    });
+  }, []);
+
+  const setFormat = useCallback((id: OutputFormatId) => {
+    setFormatState(id);
+    setSelectedSourceId(null);
+  }, []);
+
+  /** Start this format's layout from another one, rescaled to fit. */
+  const seedLayoutFrom = useCallback((from: OutputFormatId) => {
+    const scene = activeSceneRef.current;
+    if (!scene) return;
+    const target = formatRef.current;
+    if (from === target) return;
+    const fromSpec = getFormat(from);
+    const toSpec = getFormat(target);
+    const rescaled = rescaleLayout(
+      layoutFor(scene, from).map(source => ({ ...source, id: createId(source.kind), props: { ...source.props } })),
+      { width: fromSpec.width, height: fromSpec.height },
+      { width: toSpec.width, height: toSpec.height },
+    );
+    setScenes(current => current.map(item =>
+      (item.id === scene.id ? withLayout(item, target, rescaled) : item)));
+    setNotice(`Copied the ${fromSpec.short.toLowerCase()} layout into ${toSpec.short.toLowerCase()}.`);
   }, []);
 
   const addSource = useCallback((kind: SourceKind, overrides?: Partial<Source>) => {
     if (!activeSceneIdRef.current) return null;
-    const source = createSource(kind, overrides);
+    const source = createSource(kind, canvasSizeRef.current, overrides);
     setScenes(current => current.map(scene => {
       if (scene.id !== activeSceneIdRef.current) return scene;
+      const existing = layoutFor(scene, formatRef.current);
       // A backdrop is scenery: it always goes behind everything else, so adding
       // one never hides the layout you have already built.
-      const sources = kind === 'backdrop'
-        ? [source, ...scene.sources]
-        : [...scene.sources, source];
-      return { ...scene, sources };
+      const next = kind === 'backdrop' ? [source, ...existing] : [...existing, source];
+      return withLayout(scene, formatRef.current, next);
     }));
     setSelectedSourceId(source.id);
     return source.id;
@@ -207,19 +268,18 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const updateSource = useCallback((id: string, patch: Partial<Source>) => {
     setScenes(current => current.map(scene => {
       if (scene.id !== activeSceneIdRef.current) return scene;
-      return {
-        ...scene,
-        sources: scene.sources.map(source => (source.id === id
+      return withLayout(scene, formatRef.current, layoutFor(scene, formatRef.current).map(source =>
+        (source.id === id
           ? { ...source, ...patch, props: { ...source.props, ...(patch.props ?? {}) } }
-          : source)),
-      };
+          : source)));
     }));
   }, []);
 
   const removeSource = useCallback((id: string) => {
     setScenes(current => current.map(scene =>
       (scene.id === activeSceneIdRef.current
-        ? { ...scene, sources: scene.sources.filter(source => source.id !== id) }
+        ? withLayout(scene, formatRef.current,
+          layoutFor(scene, formatRef.current).filter(source => source.id !== id))
         : scene)));
     setSelectedSourceId(previous => (previous === id ? null : previous));
   }, []);
@@ -238,7 +298,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         ? romanNumeral(chord, settingsRef.current.keyRoot, settingsRef.current.mode)
         : null;
       return {
-        sources: activeSceneRef.current?.sources ?? [],
+        sources: layoutFor(activeSceneRef.current, formatRef.current),
+        canvas: canvasSizeRef.current,
         context: {
           activeNotes: notes,
           accidental: settingsRef.current.accidental,
@@ -254,6 +315,14 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     sceneCompositor.start(30);
     return () => sceneCompositor.stop();
   }, []);
+
+  // The compositor renders at the real output size, so a 4K choice produces 4K
+  // pixels rather than an upscaled 1080p frame.
+  useEffect(() => {
+    const spec = getFormat(format);
+    const resolution = getResolution(settings.resolution);
+    sceneCompositor.setOutputSize(renderSize(spec, resolution));
+  }, [format, settings.resolution]);
 
   // Autosave scene edits, debounced so dragging a source does not thrash disk.
   useEffect(() => {
@@ -454,6 +523,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       await audioEngine.resume();
       await lessonRecorder.start({
         quality: QUALITY_PRESETS[current.quality] ?? QUALITY_PRESETS['1080p30'],
+        level: current.videoQuality as QualityLevel,
+        frameRate: current.frameRate,
         recordAudio: current.recordAudio,
         recordMidi: current.recordMidi,
       });
@@ -472,7 +543,11 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       setRecording(false);
       setElapsedMs(0);
       if (result.videoPath) {
-        setNotice(result.midiPath ? `Saved video and MIDI to ${result.videoPath}` : `Saved to ${result.videoPath}`);
+        // Report the real pixel size, so a 4K choice is visibly a 4K file.
+        const size = result.width ? ` (${result.width}×${result.height})` : '';
+        setNotice(result.midiPath
+          ? `Saved video${size} and MIDI to ${result.videoPath}`
+          : `Saved${size} to ${result.videoPath}`);
       } else if (result.bytes) {
         setNotice('Recording finished. Install the desktop app to save it to disk.');
       } else {
@@ -502,7 +577,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     settings, updateSettings, persistSettings, settingsLoaded,
     catalog, refreshDevices: refresh,
     channels, levels, attachInput, detachInput, setChannelGain, setChannelMuted, setChannelSolo, setDuckingTrigger,
-    scenes, activeSceneId, activeScene, selectScene, addScene, duplicateScene, renameScene, deleteScene,
+    format, setFormat, canvasSize, seedLayoutFrom,
+    scenes, activeSceneId, activeScene, sources, reorderScene,
+    selectScene, addScene, duplicateScene, renameScene, deleteScene,
     setSceneSources, addSource, updateSource, removeSource, selectedSourceId, setSelectedSourceId,
     activeNotes, noteOn, noteOff, panic,
     recording, elapsedMs, startRecording, stopRecording,
@@ -511,7 +588,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     settings, updateSettings, persistSettings, settingsLoaded,
     catalog, refresh, channels, levels, attachInput, detachInput,
     setChannelGain, setChannelMuted, setChannelSolo, setDuckingTrigger,
-    scenes, activeSceneId, activeScene, selectScene, addScene, duplicateScene, renameScene, deleteScene,
+    format, setFormat, canvasSize, seedLayoutFrom,
+    scenes, activeSceneId, activeScene, sources, reorderScene,
+    selectScene, addScene, duplicateScene, renameScene, deleteScene,
     setSceneSources, addSource, updateSource, removeSource, selectedSourceId,
     activeNotes, noteOn, noteOff, panic,
     recording, elapsedMs, startRecording, stopRecording, notice,

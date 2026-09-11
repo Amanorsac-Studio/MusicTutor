@@ -11,9 +11,11 @@ import { useStudio } from '../lib/useStudio';
 import { detectChord, romanNumeral } from '../lib/chords';
 import { formatDuration } from '../lib/settings';
 import {
-  CANVAS_HEIGHT, CANVAS_WIDTH, centreRect, createCameraSource, createSource, fillCanvas,
-  cameraRoleRect, fitToCanvas, reorder, type CameraRole, type Source, type SourceKind,
+  cameraRoleRect, centreRect, countSources, createCameraSource, fillCanvas, fitToCanvas,
+  layoutFor, reorder, type CameraRole, type ChordDisplayMode, type Source, type SourceKind,
 } from '../lib/scene';
+import { FORMAT_IDS, OUTPUT_FORMATS, getFormat, type OutputFormatId } from '../lib/formats';
+import { KEY_NAMES, scaleNotes, type Mode } from '../lib/chords';
 import { BACKDROPS } from '../lib/backdrops';
 import { midiManager } from '../lib/midi';
 import { cameraHub } from '../lib/cameraHub';
@@ -36,16 +38,18 @@ export function Studio() {
     settings, updateSettings, catalog, activeNotes, noteOn, noteOff, panic, levels,
     channels, attachInput, detachInput,
     recording, elapsedMs, startRecording, stopRecording,
-    scenes, activeScene, activeSceneId, selectScene, addScene, duplicateScene,
-    renameScene, deleteScene, setSceneSources, addSource, updateSource, removeSource,
+    scenes, activeScene, activeSceneId, sources, selectScene, addScene, duplicateScene,
+    renameScene, deleteScene, reorderScene, setSceneSources, addSource, updateSource, removeSource,
     selectedSourceId, setSelectedSourceId,
+    format, setFormat, canvasSize, seedLayoutFrom,
   } = useStudio();
 
   const [midiInputId, setMidiInputId] = useState('');
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [viewZoom, setViewZoom] = useState(1);
 
   const micChannel = channels.find(channel => channel.id === 'mic1');
-  const selected = activeScene?.sources.find(source => source.id === selectedSourceId) ?? null;
+  const selected = sources.find(source => source.id === selectedSourceId) ?? null;
 
   const chord = useMemo(
     () => detectChord(activeNotes, settings.accidental),
@@ -61,7 +65,7 @@ export function Studio() {
 
   const layerAction = (direction: 'up' | 'down' | 'top' | 'bottom') => {
     if (!selected || !activeScene) return;
-    setSceneSources(reorder(activeScene.sources, selected.id, direction));
+    setSceneSources(reorder(sources, selected.id, direction));
   };
 
   const addMenuEntry = (entry: MenuEntry) => {
@@ -70,10 +74,10 @@ export function Studio() {
     if (entry.kind === 'camera' && entry.role) {
       // Prefer the camera already assigned to this role on the Devices page.
       const assigned = entry.role === 'hand' ? settings.handCameraId : settings.faceCameraId;
-      const used = new Set(activeScene?.sources.filter(s => s.kind === 'camera').map(s => s.props.deviceId));
+      const used = new Set(sources.filter(s => s.kind === 'camera').map(s => s.props.deviceId));
       const fallback = catalog.videoInputs.find(device => !used.has(device.id)) ?? catalog.videoInputs[0];
       const deviceId = assigned || fallback?.id;
-      const template = createCameraSource(entry.role, deviceId, entry.label);
+      const template = createCameraSource(entry.role, deviceId, entry.label, canvasSize);
       addSource('camera', {
         name: template.name,
         x: template.x, y: template.y, width: template.width, height: template.height,
@@ -162,7 +166,7 @@ export function Studio() {
           <button aria-label="Add scene" onClick={() => addScene()}><Plus size={16} /></button>
         </div>
         <div className="scene-list">
-          {scenes.map(scene => (
+          {scenes.map((scene, index) => (
             <div
               key={scene.id}
               className={`scene-row ${scene.id === activeSceneId ? 'selected' : ''}`}
@@ -177,8 +181,18 @@ export function Studio() {
                 onClick={event => event.stopPropagation()}
                 onChange={event => renameScene(scene.id, event.target.value)}
               />
-              <small>{scene.sources.length} source{scene.sources.length === 1 ? '' : 's'}</small>
+              <small>{layoutFor(scene, format).length} source{layoutFor(scene, format).length === 1 ? '' : 's'} · {countSources(scene)} total</small>
               <span className="scene-row-actions">
+                <button
+                  aria-label={`Move ${scene.name} up`}
+                  disabled={index === 0}
+                  onClick={event => { event.stopPropagation(); reorderScene(scene.id, 'up'); }}
+                ><ArrowUp size={13} /></button>
+                <button
+                  aria-label={`Move ${scene.name} down`}
+                  disabled={index === scenes.length - 1}
+                  onClick={event => { event.stopPropagation(); reorderScene(scene.id, 'down'); }}
+                ><ArrowDown size={13} /></button>
                 <button
                   aria-label={`Duplicate ${scene.name}`}
                   onClick={event => { event.stopPropagation(); duplicateScene(scene.id); }}
@@ -215,7 +229,7 @@ export function Studio() {
         )}
         <div className="source-layers">
           {/* Topmost layer first, the way a layer list reads. */}
-          {[...(activeScene?.sources ?? [])].reverse().map(source => (
+          {[...sources].reverse().map(source => (
             <div
               key={source.id}
               className={`layer-row ${source.id === selectedSourceId ? 'selected' : ''}`}
@@ -239,8 +253,18 @@ export function Studio() {
               >{source.locked ? <Lock size={13} /> : <Unlock size={13} />}</button>
             </div>
           ))}
-          {activeScene && !activeScene.sources.length && (
-            <p className="panel-hint">No sources yet. Use + to add a camera, the keyboard, or text.</p>
+          {activeScene && !sources.length && (
+            <>
+              <p className="panel-hint">
+                No sources in the {getFormat(format).short.toLowerCase()} layout yet.
+                Use + to add a camera, the keyboard, or text.
+              </p>
+              {FORMAT_IDS.filter(id => id !== format && layoutFor(activeScene, id).length > 0).map(id => (
+                <button key={id} className="subtle-btn" onClick={() => seedLayoutFrom(id)}>
+                  <Copy size={13} />Start from the {OUTPUT_FORMATS[id].short.toLowerCase()} layout
+                </button>
+              ))}
+            </>
           )}
         </div>
       </aside>
@@ -253,12 +277,36 @@ export function Studio() {
               <Circle size={8} fill={recording ? '#ff4c55' : '#39dfa0'} color={recording ? '#ff4c55' : '#39dfa0'} />
               {recording ? ' RECORDING' : ' LIVE PREVIEW'}
             </span>
-            <span>{CANVAS_WIDTH} × {CANVAS_HEIGHT} · this frame is what gets recorded</span>
+
+            {/* Each format keeps its own arrangement, so switching here changes
+                which layout you are editing, not the sources themselves. */}
+            <span className="format-switch" role="group" aria-label="Output format">
+              {FORMAT_IDS.map(id => (
+                <button
+                  key={id}
+                  className={format === id ? 'active' : ''}
+                  aria-pressed={format === id}
+                  title={OUTPUT_FORMATS[id].label}
+                  onClick={() => setFormat(id)}
+                >{OUTPUT_FORMATS[id].short} {OUTPUT_FORMATS[id].aspect}</button>
+              ))}
+            </span>
+
+            <span className="canvas-zoom">
+              <button aria-label="Zoom out" onClick={() => setViewZoom(z => Math.max(0.4, z - 0.2))}>−</button>
+              <b>{Math.round(viewZoom * 100)}%</b>
+              <button aria-label="Zoom in" onClick={() => setViewZoom(z => Math.min(3, z + 0.2))}>+</button>
+              <button aria-label="Reset zoom" onClick={() => setViewZoom(1)}>Fit</button>
+            </span>
+
+            <span>{canvasSize.width} × {canvasSize.height}</span>
           </div>
 
           {activeScene ? (
             <SceneCanvas
-              scene={activeScene}
+              sources={sources}
+              canvas={canvasSize}
+              viewZoom={viewZoom}
               selectedId={selectedSourceId}
               onSelect={setSelectedSourceId}
               onChange={setSceneSources}
@@ -272,6 +320,38 @@ export function Studio() {
           ) : (
             <div className="scene-canvas"><div className="scene-empty"><b>No scene selected</b></div></div>
           )}
+        </div>
+
+        {/* The key you are playing in, right under the picture, because chord
+            numbers are meaningless without it and it changes song to song. */}
+        <div className="key-bar">
+          <span className="key-bar-label">Key</span>
+          <div className="key-chips" role="group" aria-label="Key">
+            {KEY_NAMES.map((name, index) => (
+              <button
+                key={name}
+                className={settings.keyRoot === index ? 'active' : ''}
+                aria-pressed={settings.keyRoot === index}
+                onClick={() => updateSettings({ keyRoot: index })}
+              >{name}</button>
+            ))}
+          </div>
+          <div className="key-mode" role="group" aria-label="Mode">
+            {(['major', 'minor'] as Mode[]).map(mode => (
+              <button
+                key={mode}
+                className={settings.mode === mode ? 'active' : ''}
+                aria-pressed={settings.mode === mode}
+                onClick={() => updateSettings({ mode })}
+              >{mode}</button>
+            ))}
+          </div>
+          <span className="key-scale" aria-label="Notes in this key">
+            {scaleNotes(settings.keyRoot, settings.mode).map(pc => KEY_NAMES[pc]).join(' ')}
+          </span>
+          <span className="key-now">
+            {chord ? <><b>{chord.symbol}</b>{numeral && <i>{numeral}</i>}</> : <small>Play to analyse</small>}
+          </span>
         </div>
 
         <div className="transport">
@@ -311,6 +391,7 @@ export function Studio() {
           <SourceInspector
             source={selected}
             cameras={catalog.videoInputs}
+            canvas={canvasSize}
             onChange={patch => updateSource(selected.id, patch)}
             onRemove={() => removeSource(selected.id)}
             onLayer={layerAction}
@@ -331,11 +412,57 @@ export function Studio() {
  * Inspector
  * ------------------------------------------------------------------ */
 
+/** Push in on a picture and slide the visible window around. */
+function ZoomControls({
+  source, onProp,
+}: {
+  source: Source;
+  onProp: <K extends keyof Source['props']>(key: K, value: Source['props'][K]) => void;
+}) {
+  const zoom = source.props.zoom ?? 1;
+  return (
+    <>
+      <label className="inspector-field wide">
+        <span>Zoom {zoom.toFixed(1)}×</span>
+        <input
+          type="range" min={100} max={400}
+          aria-label="Zoom"
+          value={Math.round(zoom * 100)}
+          onChange={event => onProp('zoom', Number(event.target.value) / 100)}
+        />
+      </label>
+      {zoom > 1 && (
+        <div className="inspector-grid">
+          <label className="inspector-field">
+            <span>Pan X</span>
+            <input
+              type="range" min={-100} max={100}
+              aria-label="Pan horizontally"
+              value={Math.round((source.props.panX ?? 0) * 100)}
+              onChange={event => onProp('panX', Number(event.target.value) / 100)}
+            />
+          </label>
+          <label className="inspector-field">
+            <span>Pan Y</span>
+            <input
+              type="range" min={-100} max={100}
+              aria-label="Pan vertically"
+              value={Math.round((source.props.panY ?? 0) * 100)}
+              onChange={event => onProp('panY', Number(event.target.value) / 100)}
+            />
+          </label>
+        </div>
+      )}
+    </>
+  );
+}
+
 function SourceInspector({
-  source, cameras, onChange, onRemove, onLayer,
+  source, cameras, canvas, onChange, onRemove, onLayer,
 }: {
   source: Source;
   cameras: Array<{ id: string; name: string }>;
+  canvas: { width: number; height: number };
   onChange: (patch: Partial<Source>) => void;
   onRemove: () => void;
   onLayer: (direction: 'up' | 'down' | 'top' | 'bottom') => void;
@@ -374,9 +501,9 @@ function SourceInspector({
         {number('H', 'height')}
       </div>
       <div className="inspector-buttons">
-        <button onClick={() => onChange(fillCanvas())}><Maximize size={13} />Fill screen</button>
-        <button onClick={() => onChange(centreRect(source))}><Move size={13} />Centre</button>
-        <button onClick={() => onChange(fitToCanvas(source.width / source.height))}>Fit</button>
+        <button onClick={() => onChange(fillCanvas(canvas))}><Maximize size={13} />Fill screen</button>
+        <button onClick={() => onChange(centreRect(source, canvas))}><Move size={13} />Centre</button>
+        <button onClick={() => onChange(fitToCanvas(source.width / source.height, canvas))}>Fit</button>
       </div>
 
       <label className="section-label">Layer order</label>
@@ -433,7 +560,7 @@ function SourceInspector({
               onChange={value => {
                 const role = value as CameraRole;
                 // Switching role reshapes the frame to that shot's proportions.
-                onChange({ props: { role }, ...cameraRoleRect(role) });
+                onChange({ props: { role }, ...cameraRoleRect(role, canvas) });
               }}
               options={[
                 { value: 'face', label: 'Face camera (16:9)' },
@@ -470,6 +597,7 @@ function SourceInspector({
             />
             Mirror horizontally
           </label>
+          <ZoomControls source={source} onProp={prop} />
         </>
       )}
 
@@ -566,14 +694,32 @@ function SourceInspector({
             />
           </label>
           {source.kind === 'chord' && (
-            <label className="inspector-check">
-              <input
-                type="checkbox"
-                checked={source.props.showRoman !== false}
-                onChange={event => prop('showRoman', event.target.checked)}
-              />
-              Show Roman numeral
-            </label>
+            <>
+              <div className="inspector-field wide">
+                <span>Show</span>
+                <Select
+                  label="Chord display"
+                  value={source.props.chordMode ?? 'both'}
+                  onChange={value => prop('chordMode', value as ChordDisplayMode)}
+                  options={[
+                    { value: 'names', label: 'Chord names (Cmaj7)' },
+                    { value: 'numerals', label: 'Numbers in the key (IV7)' },
+                    { value: 'both', label: 'Both' },
+                  ]}
+                />
+              </div>
+              {(source.props.chordMode ?? 'both') !== 'names' && (
+                <label className="inspector-field wide">
+                  <span>Number size {Math.round((source.props.numeralScale ?? 0.5) * 100)}% of the name</span>
+                  <input
+                    type="range" min={20} max={300}
+                    aria-label="Number size"
+                    value={Math.round((source.props.numeralScale ?? 0.5) * 100)}
+                    onChange={event => prop('numeralScale', Number(event.target.value) / 100)}
+                  />
+                </label>
+              )}
+            </>
           )}
         </>
       )}
@@ -588,6 +734,12 @@ function SourceInspector({
             onChange={event => prop('background', event.target.value)}
           />
         </label>
+      )}
+
+      {source.kind === 'image' && (
+        <>
+          <ZoomControls source={source} onProp={prop} />
+        </>
       )}
 
       {source.kind === 'image' && (
