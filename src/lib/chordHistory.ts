@@ -10,6 +10,8 @@
 export type ChordEntry = {
   /** Stable identity, so a redraw does not restart an animation. */
   id: string;
+  /** When it was recorded, for deciding whether a fuller reading replaces it. */
+  at: number;
   /** The notes that made the chord, low to high. */
   notes: number[];
   /** Chord name, such as Fmaj7. */
@@ -21,16 +23,53 @@ export type ChordEntry = {
 /** How many chords the staff shows behind the current one. */
 export const HISTORY_LIMIT = 4;
 
+/**
+ * How long a chord must be held still before it is written down, in ms.
+ *
+ * Without this the staff fills with rubbish. Nobody puts four fingers down at
+ * exactly the same instant: playing a C major triad from the bottom up passes
+ * through C, then a bare fifth, then the triad, and recording each step gives
+ * three meaningless entries for one chord. Waiting for the hand to settle
+ * records what was meant rather than how it was reached.
+ */
+export const SETTLE_MS = 170;
+
+/**
+ * How long a just-recorded chord can still be replaced by a fuller one, in ms.
+ *
+ * A rolled or spread chord takes longer than the settle time to complete, so
+ * the first reading lands early. When the notes that follow only add to what
+ * was already there, they are the same chord finishing rather than a new one.
+ */
+export const SUPERSEDE_MS = 1400;
+
 let counter = 0;
 
 export const createEntry = (
-  notes: number[], symbol: string, numeral?: string,
+  notes: number[], symbol: string, numeral?: string, at = Date.now(),
 ): ChordEntry => ({
-  id: `chord_${Date.now().toString(36)}_${(counter++).toString(36)}`,
+  id: `chord_${at.toString(36)}_${(counter++).toString(36)}`,
+  at,
   notes: [...notes].sort((a, b) => a - b),
   symbol,
   numeral,
 });
+
+/**
+ * Whether the newer chord is the older one still being played.
+ *
+ * True when it keeps every note the older one had and adds at least one more,
+ * which is what a spread chord looks like as the hand completes it.
+ */
+export function isSameChordGrowing(
+  older: ChordEntry | undefined, newer: ChordEntry, withinMs = SUPERSEDE_MS,
+): boolean {
+  if (!older) return false;
+  if (newer.at - older.at > withinMs) return false;
+  if (newer.notes.length <= older.notes.length) return false;
+  const held = new Set(newer.notes);
+  return older.notes.every(note => held.has(note));
+}
 
 /** Two chords are the same when they are the same notes in the same octaves. */
 export const sameChord = (a: ChordEntry | undefined, b: ChordEntry): boolean =>
@@ -45,7 +84,15 @@ export const sameChord = (a: ChordEntry | undefined, b: ChordEntry): boolean =>
 export function pushChord(
   history: ChordEntry[], entry: ChordEntry, limit = HISTORY_LIMIT,
 ): ChordEntry[] {
-  if (sameChord(history[history.length - 1], entry)) return history;
+  const newest = history[history.length - 1];
+  if (sameChord(newest, entry)) return history;
+
+  // A chord that is still being spread replaces its own earlier reading, so
+  // one gesture leaves one entry rather than a trail of partial ones.
+  if (isSameChordGrowing(newest, entry)) {
+    return [...history.slice(0, -1), entry];
+  }
+
   const next = [...history, entry];
   return next.length > limit ? next.slice(next.length - limit) : next;
 }

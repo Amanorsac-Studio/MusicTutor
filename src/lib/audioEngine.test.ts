@@ -26,6 +26,17 @@ function stubAudioContext() {
     createDynamicsCompressor = vi.fn(node);
     createMediaStreamSource = vi.fn(node);
     createMediaStreamDestination = vi.fn(() => ({ ...node(), stream: { getAudioTracks: () => [] } }));
+    createBiquadFilter = vi.fn(() => ({ ...node(), Q: param(), detune: param(), type: 'lowpass' }));
+    createStereoPanner = vi.fn(() => ({ ...node(), pan: param() }));
+    createConvolver = vi.fn(() => ({ ...node(), buffer: null }));
+    createPeriodicWave = vi.fn(() => ({}));
+    createBufferSource = vi.fn(() => ({ ...node(), buffer: null, loop: false }));
+    createBuffer = vi.fn((channels: number, length: number) => ({
+      length,
+      numberOfChannels: channels,
+      getChannelData: () => new Float32Array(length),
+      copyToChannel: vi.fn(),
+    }));
     resume = vi.fn().mockResolvedValue(undefined);
     close = vi.fn().mockResolvedValue(undefined);
   }

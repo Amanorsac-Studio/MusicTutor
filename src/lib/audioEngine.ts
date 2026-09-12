@@ -18,6 +18,45 @@
  */
 
 import { frequencyOf } from './chords';
+import {
+  aftersoundLevel, brightnessDecay, buildSpectrum, damperTime, finalBrightness,
+  fundamentalDecay, hammerDecay, hammerLevel, hammerTone, impulseResponse,
+  initialBrightness, initialDecay, notePan, noteGain, unisonDetune,
+} from './piano';
+
+/**
+ * Two seconds of noise, reused by every hammer strike.
+ *
+ * A fixed sequence rather than Math.random, so a note struck twice is not
+ * suspiciously identical but the instrument is the same every session.
+ */
+function buildNoise(ctx: AudioContext): AudioBuffer {
+  const noise = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 2), ctx.sampleRate);
+  const channel = noise.getChannelData(0);
+  let seed = 987654321;
+  for (let i = 0; i < channel.length; i += 1) {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    channel[i] = (seed / 0xffffffff) * 2 - 1;
+  }
+  return noise;
+}
+
+/**
+ * One sounding note.
+ *
+ * Everything the voice owns is held so it can be torn down cleanly: a leaked
+ * oscillator keeps running and costs processing for the rest of the session.
+ */
+type Voice = {
+  note: number;
+  oscillators: OscillatorNode[];
+  /** The hammer knock, which stops on its own well before the tone does. */
+  hammer?: AudioBufferSourceNode;
+  gain: GainNode;
+  tone: BiquadFilterNode;
+  pan: StereoPannerNode;
+  released: boolean;
+};
 
 export const METER_FLOOR_DB = -60;
 
@@ -92,7 +131,16 @@ export class AudioEngine {
 
   private channels = new Map<string, ChannelNodes>();
   private synthChannel?: ChannelNodes;
-  private voices = new Map<number, { oscillators: OscillatorNode[]; gain: GainNode; released: boolean }>();
+  private voices = new Map<number, Voice>();
+  /** One PeriodicWave per note and dynamic, reused rather than rebuilt. */
+  private waveCache = new Map<string, PeriodicWave>();
+  /** Shared noise for the hammer knock, generated once. */
+  private noiseBuffer?: AudioBuffer;
+  /** The room, and how much of the instrument is sent into it. */
+  private reverb?: ConvolverNode;
+  private reverbSend?: GainNode;
+  /** Lifted by the sustain pedal: undamped strings ring sympathetically. */
+  private pedalResonance?: GainNode;
   private sustained = new Set<number>();
   private sustainPedal = false;
 
@@ -193,7 +241,42 @@ export class AudioEngine {
     this.synthChannel.source = synthInput;
     this.channels.set('instrument', this.synthChannel);
 
+    // The room the piano is standing in. A dry piano sounds like a toy, and
+    // this is the single largest improvement per unit of processing. It is
+    // optional, though: an environment without convolution should still play,
+    // just without the space around the notes.
+    try {
+      this.buildRoom(ctx, synthInput);
+    } catch {
+      this.reverb = undefined;
+      this.reverbSend = undefined;
+      this.pedalResonance = undefined;
+    }
+
+    try {
+      this.noiseBuffer = buildNoise(ctx);
+    } catch {
+      this.noiseBuffer = undefined;
+    }
+
     return ctx;
+  }
+
+  /** The convolution reverb and its two sends, built on first use. */
+  private buildRoom(ctx: AudioContext, output: AudioNode): void {
+    const { left, right } = impulseResponse(ctx.sampleRate);
+    const ir = ctx.createBuffer(2, left.length, ctx.sampleRate);
+    ir.copyToChannel(left, 0);
+    ir.copyToChannel(right, 1);
+    this.reverb = ctx.createConvolver();
+    this.reverb.buffer = ir;
+    this.reverbSend = ctx.createGain();
+    this.reverbSend.gain.value = 0.14;
+    this.pedalResonance = ctx.createGain();
+    this.pedalResonance.gain.value = 0;
+    this.reverbSend.connect(this.reverb);
+    this.pedalResonance.connect(this.reverb);
+    this.reverb.connect(output);
   }
 
   get context(): AudioContext | undefined {
@@ -546,8 +629,39 @@ export class AudioEngine {
   }
 
   /**
+   * The waveform for one note at one dynamic.
+   *
+   * Building a PeriodicWave is not cheap, and a note is played hundreds of
+   * times in a lesson, so they are cached per note and per dynamic band. Eight
+   * bands is finer than the ear can pick out in a legato line.
+   */
+  private waveFor(note: number, fundamental: number, velocity: number): PeriodicWave | undefined {
+    const ctx = this.ctx;
+    if (!ctx) return undefined;
+    const band = Math.max(0, Math.min(7, Math.round(velocity * 7)));
+    const key = `${note}:${band}`;
+    const cached = this.waveCache.get(key);
+    if (cached) return cached;
+
+    const real = buildSpectrum(fundamental, band / 7, ctx.sampleRate);
+    const wave = ctx.createPeriodicWave(real, new Float32Array(real.length), {
+      disableNormalization: false,
+    });
+    // A whole keyboard at eight dynamics is bounded and small; no eviction
+    // policy is needed, but the cap stops an unforeseen path growing it.
+    if (this.waveCache.size < 800) this.waveCache.set(key, wave);
+    return wave;
+  }
+
+  /**
    * Sound a note. `velocity` is 0..1 (MIDI velocity / 127).
    * Re-triggering a sounding note steals the voice without emitting a note-off.
+   *
+   * The voice is built from the acoustics in ./piano: a stiff-string spectrum
+   * with the hammer's notch in it, two slightly detuned copies so the note
+   * shimmers the way three real strings do, a filter that closes as the note
+   * rings so the tone darkens, a two-stage envelope for the piano's fast drop
+   * into a long tail, and a noise knock for the hammer.
    */
   noteOn(note: number, velocity = 0.7): void {
     const ctx = this.ensure();
@@ -556,44 +670,102 @@ export class AudioEngine {
     // Voice stealing: retire the old voice quickly, but do not report note-off.
     const existing = this.voices.get(note);
     if (existing) this.retireVoice(note, existing, 0.04);
-
     this.sustained.delete(note);
 
     const level = Math.max(0.02, Math.min(1, velocity));
-    const frequency = frequencyOf(note, this.concertPitch);
+    const fundamental = frequencyOf(note, this.concertPitch);
     const now = ctx.currentTime;
+    const wave = this.waveFor(note, fundamental, level);
+    if (!wave) return;
+
+    /* ---- the tone ---- */
+
+    // The filter is what makes the note darken as it decays. A fixed waveform
+    // cannot lose its upper partials; a closing filter can.
+    const tone = ctx.createBiquadFilter();
+    tone.type = 'lowpass';
+    tone.Q.value = 0.4;
+    const openTo = initialBrightness(fundamental, level);
+    tone.frequency.setValueAtTime(openTo, now);
+    tone.frequency.setTargetAtTime(finalBrightness(fundamental), now, brightnessDecay(note));
+
+    // Voicing: a real piano is not equally bright at both ends of an octave.
+    const body = ctx.createBiquadFilter();
+    body.type = 'peaking';
+    body.frequency.value = Math.min(2600, Math.max(180, fundamental * 2.4));
+    body.Q.value = 0.8;
+    body.gain.value = 2.2;
 
     const gain = ctx.createGain();
-    // Higher notes decay faster, as on a real piano.
-    const decay = Math.max(0.6, 3.2 - (note - 21) * 0.022);
-    const peak = level * 0.28;
-    gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(peak, now + 0.006);
-    gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak * 0.34), now + 0.28);
-    gain.gain.exponentialRampToValueAtTime(0.0002, now + decay);
+    const peak = noteGain(note, level);
+    const tail = peak * aftersoundLevel(level);
+    const full = fundamentalDecay(note);
 
-    // Harder strikes bring out more upper partials.
-    const partials: Array<[number, number, OscillatorType]> = [
-      [1, 1, 'triangle'],
-      [2, 0.16 + level * 0.16, 'sine'],
-      [3, 0.06 + level * 0.09, 'sine'],
-      [4, 0.02 + level * 0.05, 'sine'],
-    ];
-    const oscillators = partials.map(([ratio, amplitude, type]) => {
+    // Attack, then the fast first decay, then the long aftersound. The two
+    // stages are the piano's signature: a synthesiser with one decay always
+    // sounds like a synthesiser.
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(peak, now + 0.0035);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, tail), now + initialDecay(note));
+    gain.gain.exponentialRampToValueAtTime(0.0002, now + full);
+
+    const pan = ctx.createStereoPanner();
+    pan.pan.value = notePan(note);
+
+    // Three strings per note in the middle of the keyboard, tuned very
+    // slightly apart. Two oscillators is enough to hear the shimmer.
+    const spread = unisonDetune(note);
+    const oscillators = [0, spread, -spread * 0.72].map((cents, index) => {
       const osc = ctx.createOscillator();
-      osc.type = type;
-      // Slight inharmonicity, as with real strings.
-      osc.frequency.value = frequency * ratio * (1 + (ratio - 1) * 0.0008);
-      const partialGain = ctx.createGain();
-      partialGain.gain.value = amplitude;
-      osc.connect(partialGain);
-      partialGain.connect(gain);
+      osc.setPeriodicWave(wave);
+      osc.frequency.value = fundamental;
+      osc.detune.value = cents;
+      const stringGain = ctx.createGain();
+      stringGain.gain.value = index === 0 ? 1 : 0.52;
+      osc.connect(stringGain);
+      stringGain.connect(tone);
       osc.start(now);
       return osc;
     });
 
-    gain.connect(this.synthChannel.source);
-    this.voices.set(note, { oscillators, gain, released: false });
+    tone.connect(body);
+    body.connect(gain);
+    gain.connect(pan);
+    pan.connect(this.synthChannel.source);
+    if (this.reverbSend) pan.connect(this.reverbSend);
+
+    /* ---- the hammer ---- */
+
+    let hammer: AudioBufferSourceNode | undefined;
+    if (this.noiseBuffer && level > 0.05) {
+      hammer = ctx.createBufferSource();
+      hammer.buffer = this.noiseBuffer;
+      hammer.loop = true;
+      // Start somewhere different each time, so repeated notes are not
+      // identical the way a sampled transient would be.
+      const offset = (note * 0.137 + level * 0.41) % 1.8;
+
+      const knock = ctx.createBiquadFilter();
+      knock.type = 'bandpass';
+      knock.frequency.value = hammerTone(fundamental);
+      knock.Q.value = 0.7;
+
+      const knockGain = ctx.createGain();
+      const decay = hammerDecay(level);
+      knockGain.gain.setValueAtTime(0, now);
+      knockGain.gain.linearRampToValueAtTime(hammerLevel(level) * peak * 3.2, now + 0.0012);
+      knockGain.gain.exponentialRampToValueAtTime(0.0001, now + Math.max(0.008, decay));
+
+      hammer.connect(knock);
+      knock.connect(knockGain);
+      knockGain.connect(pan);
+      hammer.start(now, offset);
+      hammer.stop(now + 0.25);
+    }
+
+    this.voices.set(note, {
+      oscillators, hammer, gain, tone, pan, released: false, note,
+    });
     this.emit(note, true, level);
   }
 
@@ -607,15 +779,13 @@ export class AudioEngine {
       this.emit(note, false, 0);
       return;
     }
-    this.retireVoice(note, voice, 0.22);
+    // The damper is felt, not a switch, and it is slower on a thick string.
+    this.retireVoice(note, voice, damperTime(note));
     this.emit(note, false, 0);
   }
 
-  private retireVoice(
-    note: number,
-    voice: { oscillators: OscillatorNode[]; gain: GainNode },
-    releaseSeconds: number,
-  ): void {
+
+  private retireVoice(note: number, voice: Voice, releaseSeconds: number): void {
     const ctx = this.ctx;
     if (!ctx) return;
     const now = ctx.currentTime;
@@ -626,13 +796,24 @@ export class AudioEngine {
     else param.cancelScheduledValues(now);
     param.setTargetAtTime(0.0001, now, releaseSeconds / 3);
 
+    // Close the filter as the note is damped, so a released note goes dull as
+    // well as quiet — which is what a damper actually does to a string.
+    voice.tone.frequency.setTargetAtTime(
+      Math.max(200, voice.tone.frequency.value * 0.45), now, releaseSeconds / 2,
+    );
+
     const stopAt = now + releaseSeconds + 0.1;
     voice.oscillators.forEach(osc => {
       try { osc.stop(stopAt); } catch { /* already stopped */ }
       osc.onended = () => { try { osc.disconnect(); } catch { /* noop */ } };
     });
-    // Release the gain node once the tail has finished, so voices do not leak.
-    window.setTimeout(() => { try { voice.gain.disconnect(); } catch { /* noop */ } }, (releaseSeconds + 0.3) * 1000);
+    try { voice.hammer?.stop(now); } catch { /* already finished */ }
+    // Release the nodes once the tail has gone, so voices do not accumulate.
+    window.setTimeout(() => {
+      [voice.gain, voice.tone, voice.pan].forEach(node => {
+        try { node.disconnect(); } catch { /* noop */ }
+      });
+    }, (releaseSeconds + 0.3) * 1000);
     this.voices.delete(note);
     this.sustained.delete(note);
   }
@@ -640,6 +821,12 @@ export class AudioEngine {
   /** MIDI CC 64. Holding the pedal defers releases until it lifts. */
   setSustain(down: boolean): void {
     this.sustainPedal = down;
+    // With the pedal down every string is free to ring in sympathy, which on a
+    // real piano is heard as the whole instrument opening up rather than as
+    // any particular note. A little extra room does the same job here.
+    if (this.pedalResonance && this.ctx) {
+      this.pedalResonance.gain.setTargetAtTime(down ? 0.1 : 0, this.ctx.currentTime, down ? 0.08 : 0.3);
+    }
     if (down) return;
     [...this.sustained].forEach(note => {
       const voice = this.voices.get(note);

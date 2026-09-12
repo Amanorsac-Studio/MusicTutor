@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  HISTORY_LIMIT, chordHistory, createEntry, isChordWorthKeeping, pushChord,
-  sameChord, staffColumns,
+  HISTORY_LIMIT, SETTLE_MS, SUPERSEDE_MS, chordHistory, createEntry,
+  isChordWorthKeeping, isSameChordGrowing, pushChord, sameChord, staffColumns,
 } from './chordHistory';
 
 const entry = (notes: number[], symbol = 'C') => createEntry(notes, symbol);
@@ -37,6 +37,60 @@ describe('pushChord', () => {
   it('treats the same chord in a different octave as a different chord', () => {
     const history = pushChord([], entry([60, 64, 67]));
     expect(pushChord(history, entry([72, 76, 79]))).toHaveLength(2);
+  });
+
+  it('replaces a partial reading when the chord finishes, rather than adding', () => {
+    const at = 500_000;
+    const history = pushChord([], createEntry([60, 64], 'C', undefined, at));
+    const settled = pushChord(history, createEntry([60, 64, 67], 'C', undefined, at + 200));
+    expect(settled).toHaveLength(1);
+    expect(settled[0].notes).toEqual([60, 64, 67]);
+  });
+
+  it('does not let one growing chord swallow the one before it', () => {
+    const at = 500_000;
+    let history = pushChord([], createEntry([53, 57, 60], 'F', undefined, at));
+    history = pushChord(history, createEntry([60, 64, 67], 'C', undefined, at + 200));
+    expect(history.map(item => item.symbol)).toEqual(['F', 'C']);
+  });
+});
+
+describe('isSameChordGrowing', () => {
+  const at = 1_000_000;
+
+  it('recognises a spread chord completing', () => {
+    const first = createEntry([60, 64], 'C', undefined, at);
+    const full = createEntry([60, 64, 67], 'C', undefined, at + 300);
+    expect(isSameChordGrowing(first, full)).toBe(true);
+  });
+
+  it('does not treat a different chord as the same one growing', () => {
+    const first = createEntry([60, 64, 67], 'C', undefined, at);
+    const next = createEntry([62, 65, 69, 72], 'Dm7', undefined, at + 300);
+    expect(isSameChordGrowing(first, next)).toBe(false);
+  });
+
+  it('does not treat a chord losing a note as growing', () => {
+    const full = createEntry([60, 64, 67], 'C', undefined, at);
+    const fewer = createEntry([60, 64], 'C', undefined, at + 300);
+    expect(isSameChordGrowing(full, fewer)).toBe(false);
+  });
+
+  it('stops replacing once the window has passed', () => {
+    const first = createEntry([60, 64], 'C', undefined, at);
+    const later = createEntry([60, 64, 67], 'C', undefined, at + SUPERSEDE_MS + 1);
+    expect(isSameChordGrowing(first, later)).toBe(false);
+  });
+
+  it('handles there being nothing before it', () => {
+    expect(isSameChordGrowing(undefined, createEntry([60, 64, 67], 'C'))).toBe(false);
+  });
+});
+
+describe('the settle time', () => {
+  it('is long enough to cover a hand landing, short enough to feel immediate', () => {
+    expect(SETTLE_MS).toBeGreaterThanOrEqual(100);
+    expect(SETTLE_MS).toBeLessThanOrEqual(300);
   });
 });
 

@@ -13,6 +13,7 @@ import {
   ledgerSteps, noteOffsets, placeNote, staffGeometry, staffLines, stepY,
   type Clef, type StaffGeometry,
 } from './staff';
+import { clefShapes } from './clefs';
 
 /** One vertical stack of notes: a chord, or what is held right now. */
 export type StaffColumn = {
@@ -39,57 +40,38 @@ export type StaffOptions = {
 };
 
 /**
- * The treble clef, drawn as curves around the G line.
+ * Paint a clef at a given point, filled rather than stroked.
  *
- * A music font cannot be relied on to be installed, and the Unicode clefs come
- * out as empty boxes without one. The shape is defined in staff spaces with its
- * origin on the G line — the line the spiral encircles — so it lands correctly
- * whatever size the staff is drawn at.
+ * The shapes come from ./clefs as outlines in staff spaces, so they scale with
+ * the staff and land with their anchor — the eye of the treble clef, the head
+ * of the bass clef — exactly on the line each one names.
  */
-function traceTrebleClef(ctx: CanvasRenderingContext2D, x: number, y: number, u: number): void {
-  ctx.beginPath();
-  // The tail below the staff, rising into the crossing.
-  ctx.moveTo(x - 0.28 * u, y + 2.45 * u);
-  ctx.bezierCurveTo(x + 0.45 * u, y + 2.7 * u, x + 0.72 * u, y + 1.85 * u, x + 0.22 * u, y + 1.35 * u);
-  // Up the stem, leaning left as it climbs.
-  ctx.bezierCurveTo(x - 0.7 * u, y + 0.6 * u, x - 0.95 * u, y - 0.9 * u, x - 0.2 * u, y - 2.1 * u);
-  // Over the top hook and back down inside it.
-  ctx.bezierCurveTo(x + 0.62 * u, y - 3.0 * u, x + 0.3 * u, y - 3.95 * u, x - 0.4 * u, y - 3.55 * u);
-  ctx.bezierCurveTo(x - 1.05 * u, y - 3.18 * u, x - 0.88 * u, y - 1.9 * u, x - 0.1 * u, y - 0.95 * u);
-  // Down through the staff and into the eye on the G line.
-  ctx.bezierCurveTo(x + 0.5 * u, y - 0.1 * u, x + 0.95 * u, y + 0.55 * u, x + 0.5 * u, y + 0.95 * u);
-  ctx.bezierCurveTo(x + 0.05 * u, y + 1.32 * u, x - 0.62 * u, y + 0.95 * u, x - 0.55 * u, y + 0.35 * u);
-  ctx.bezierCurveTo(x - 0.5 * u, y - 0.1 * u, x - 0.12 * u, y - 0.28 * u, x + 0.08 * u, y - 0.05 * u);
-  ctx.stroke();
-}
+function drawClef(
+  ctx: CanvasRenderingContext2D,
+  clef: Clef,
+  x: number,
+  y: number,
+  u: number,
+  ink: string,
+): void {
+  const { ribbon, discs } = clefShapes(clef);
+  ctx.fillStyle = ink;
 
-/**
- * The bass clef: a comma curling down from the F line, with its two dots either
- * side of that line, which is how a reader finds F without counting.
- */
-function traceBassClef(ctx: CanvasRenderingContext2D, x: number, y: number, u: number): void {
-  // A heavier stroke than the G clef: the F clef is a thick comma, and at the
-  // size a staff is drawn on screen a thin one reads as a bracket.
-  ctx.save();
-  ctx.lineWidth = Math.max(1.6, u * 0.26);
-  ctx.beginPath();
-  // The upper terminal, then over the top of the head and down its left side.
-  ctx.moveTo(x + 0.52 * u, y - 0.62 * u);
-  ctx.bezierCurveTo(x + 0.22 * u, y - 1.18 * u, x - 0.72 * u, y - 1.05 * u, x - 0.66 * u, y - 0.28 * u);
-  // Round the bottom of the head and back out to the right, almost closing it.
-  ctx.bezierCurveTo(x - 0.6 * u, y + 0.42 * u, x + 0.16 * u, y + 0.68 * u, x + 0.5 * u, y + 0.22 * u);
-  // The long tail sweeping down and left below the staff.
-  ctx.bezierCurveTo(x + 1.15 * u, y + 1.05 * u, x + 0.45 * u, y + 2.1 * u, x - 0.95 * u, y + 2.5 * u);
-  ctx.stroke();
-  ctx.restore();
+  if (ribbon.length > 2) {
+    ctx.beginPath();
+    ctx.moveTo(x + ribbon[0][0] * u, y + ribbon[0][1] * u);
+    for (let i = 1; i < ribbon.length; i += 1) {
+      ctx.lineTo(x + ribbon[i][0] * u, y + ribbon[i][1] * u);
+    }
+    ctx.closePath();
+    ctx.fill();
+  }
 
-  const dot = 0.19 * u;
-  ctx.beginPath();
-  ctx.arc(x + 1.1 * u, y - 0.5 * u, dot, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(x + 1.1 * u, y + 0.5 * u, dot, 0, Math.PI * 2);
-  ctx.fill();
+  discs.forEach(disc => {
+    ctx.beginPath();
+    ctx.arc(x + disc.x * u, y + disc.y * u, disc.r * u, 0, Math.PI * 2);
+    ctx.fill();
+  });
 }
 
 /** The five lines of one staff, plus its clef. */
@@ -101,6 +83,7 @@ function drawOneStaff(
 ): void {
   const lines = staffLines(clef);
   const left = geometry.noteLeft * 0.08;
+  const clefX = left + geometry.space * 2.1;
   ctx.strokeStyle = ink;
   ctx.fillStyle = ink;
   ctx.lineWidth = Math.max(1, geometry.space * 0.07);
@@ -112,17 +95,13 @@ function drawOneStaff(
     ctx.stroke();
   });
 
-  ctx.lineWidth = Math.max(1.2, geometry.space * 0.15);
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
   if (clef === 'treble') {
     // The eye of the G clef sits on the second line up, which is G4.
-    traceTrebleClef(ctx, left + geometry.space * 1.5, stepY(lines[1], geometry), geometry.space);
+    drawClef(ctx, 'treble', clefX, stepY(lines[1], geometry), geometry.space, ink);
   } else {
     // The head of the F clef sits on the second line down, which is F3.
-    traceBassClef(ctx, left + geometry.space * 1.35, stepY(lines[3], geometry), geometry.space);
+    drawClef(ctx, 'bass', clefX - geometry.space * 0.1, stepY(lines[3], geometry), geometry.space, ink);
   }
-  ctx.lineCap = 'butt';
 }
 
 /** Draw one chord as a stack of noteheads at a given horizontal position. */

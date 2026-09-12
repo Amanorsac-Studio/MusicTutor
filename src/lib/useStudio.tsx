@@ -26,7 +26,7 @@ import {
 import { sceneCompositor } from './compositor';
 import { INPUT_SLOTS } from './inputs';
 import { detectChord, romanNumeral } from './chords';
-import { chordHistory, isChordWorthKeeping, staffColumns } from './chordHistory';
+import { SETTLE_MS, chordHistory, isChordWorthKeeping, staffColumns } from './chordHistory';
 
 export type StudioValue = {
   settings: AppSettings;
@@ -344,16 +344,20 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   /*
    * Remember each chord as it is played, for the notation staff.
    *
-   * Recording happens while the chord is still held rather than on release, so
-   * the staff shows it the moment it is recognised; a chord still down is drawn
-   * as the live one, so nothing appears twice.
+   * The wait is the whole trick. Every key press changes the set of sounding
+   * notes, so recording immediately would write down each half-built shape on
+   * the way to the chord. Restarting the timer on every change means only the
+   * settled hand is recorded, which is what the player actually meant.
    */
   useEffect(() => {
     if (!isChordWorthKeeping(activeNotes)) return;
-    const chord = detectChord(activeNotes, settings.accidental);
-    if (!chord) return;
-    const numeral = romanNumeral(chord, settings.keyRoot, settings.mode);
-    chordHistory.push([...activeNotes], chord.symbol, numeral ?? undefined);
+    const timer = window.setTimeout(() => {
+      const chord = detectChord(activeNotes, settings.accidental);
+      if (!chord) return;
+      const numeral = romanNumeral(chord, settings.keyRoot, settings.mode);
+      chordHistory.push([...activeNotes], chord.symbol, numeral ?? undefined);
+    }, SETTLE_MS);
+    return () => window.clearTimeout(timer);
   }, [activeNotes, settings.accidental, settings.keyRoot, settings.mode]);
 
   /*
