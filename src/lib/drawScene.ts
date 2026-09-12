@@ -11,7 +11,7 @@ import type { CanvasSize } from './formats';
 import { isBlackKey, noteName, octaveOf, pitchClass, type Accidental } from './chords';
 import { cameraHub } from './cameraHub';
 import { findBackdrop, paintBackdrop } from './backdrops';
-import { drawStaff, type StaffColumn } from './drawStaff';
+import { drawStaff } from './drawStaff';
 
 export type RenderContext = {
   /** Notes currently sounding, for the keyboard and chord readout. */
@@ -21,8 +21,6 @@ export type RenderContext = {
   chordSymbol?: string;
   chordNumeral?: string;
   chordQuality?: string;
-  /** Recent chords plus what is sounding now, for the notation staff. */
-  staffColumns?: StaffColumn[];
   /** Images already loaded and ready to draw, keyed by source id. */
   images: Map<string, CanvasImageSource>;
 };
@@ -394,7 +392,7 @@ function drawSource(ctx: CanvasRenderingContext2D, source: Source, context: Rend
 
     case 'staff': {
       drawStaff(ctx, { width, height }, {
-        columns: context.staffColumns ?? [
+        columns: [
           { id: 'live', notes: [...context.activeNotes], live: true, label: context.chordSymbol },
         ],
         accidental: context.accidental,

@@ -13,7 +13,7 @@ import {
   ledgerSteps, noteOffsets, placeNote, staffGeometry, staffLines, stepY,
   type Clef, type StaffGeometry,
 } from './staff';
-import { clefShapes } from './clefs';
+import { CLEF_GLYPHS, type PathCommand } from './clefGlyphs';
 
 /** One vertical stack of notes: a chord, or what is held right now. */
 export type StaffColumn = {
@@ -40,11 +40,11 @@ export type StaffOptions = {
 };
 
 /**
- * Paint a clef at a given point, filled rather than stroked.
+ * Paint a clef at a given point.
  *
- * The shapes come from ./clefs as outlines in staff spaces, so they scale with
- * the staff and land with their anchor — the eye of the treble clef, the head
- * of the bass clef — exactly on the line each one names.
+ * The outlines are the real Bravura glyphs in staff spaces, with their origin
+ * on the line the clef names, so placing that origin on the G line or the F
+ * line puts the whole glyph exactly where an engraver would put it.
  */
 function drawClef(
   ctx: CanvasRenderingContext2D,
@@ -54,24 +54,27 @@ function drawClef(
   u: number,
   ink: string,
 ): void {
-  const { ribbon, discs } = clefShapes(clef);
+  const glyph = CLEF_GLYPHS[clef];
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(u, u);
   ctx.fillStyle = ink;
-
-  if (ribbon.length > 2) {
-    ctx.beginPath();
-    ctx.moveTo(x + ribbon[0][0] * u, y + ribbon[0][1] * u);
-    for (let i = 1; i < ribbon.length; i += 1) {
-      ctx.lineTo(x + ribbon[i][0] * u, y + ribbon[i][1] * u);
+  ctx.beginPath();
+  glyph.path.forEach((command: PathCommand) => {
+    switch (command[0]) {
+      case 'M': ctx.moveTo(command[1], command[2]); break;
+      case 'L': ctx.lineTo(command[1], command[2]); break;
+      case 'Q': ctx.quadraticCurveTo(command[1], command[2], command[3], command[4]); break;
+      case 'C': ctx.bezierCurveTo(
+        command[1], command[2], command[3], command[4], command[5], command[6],
+      ); break;
+      case 'Z': ctx.closePath(); break;
     }
-    ctx.closePath();
-    ctx.fill();
-  }
-
-  discs.forEach(disc => {
-    ctx.beginPath();
-    ctx.arc(x + disc.x * u, y + disc.y * u, disc.r * u, 0, Math.PI * 2);
-    ctx.fill();
   });
+  // The glyph is a single path with counters — the loops of the treble clef and
+  // the hole in the bass clef's head — so it has to be filled even-odd.
+  ctx.fill('evenodd');
+  ctx.restore();
 }
 
 /** The five lines of one staff, plus its clef. */
@@ -95,13 +98,10 @@ function drawOneStaff(
     ctx.stroke();
   });
 
-  if (clef === 'treble') {
-    // The eye of the G clef sits on the second line up, which is G4.
-    drawClef(ctx, 'treble', clefX, stepY(lines[1], geometry), geometry.space, ink);
-  } else {
-    // The head of the F clef sits on the second line down, which is F3.
-    drawClef(ctx, 'bass', clefX - geometry.space * 0.1, stepY(lines[3], geometry), geometry.space, ink);
-  }
+  // Each clef is anchored on the line it names: G, the second line up on the
+  // treble staff, and F, the second line down on the bass staff.
+  const anchor = clef === 'treble' ? lines[1] : lines[3];
+  drawClef(ctx, clef, clefX, stepY(anchor, geometry), geometry.space, ink);
 }
 
 /** Draw one chord as a stack of noteheads at a given horizontal position. */

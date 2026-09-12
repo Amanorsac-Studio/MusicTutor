@@ -26,7 +26,6 @@ import {
 import { sceneCompositor } from './compositor';
 import { INPUT_SLOTS } from './inputs';
 import { detectChord, romanNumeral } from './chords';
-import { SETTLE_MS, chordHistory, isChordWorthKeeping, staffColumns } from './chordHistory';
 
 export type StudioValue = {
   settings: AppSettings;
@@ -342,25 +341,6 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /*
-   * Remember each chord as it is played, for the notation staff.
-   *
-   * The wait is the whole trick. Every key press changes the set of sounding
-   * notes, so recording immediately would write down each half-built shape on
-   * the way to the chord. Restarting the timer on every change means only the
-   * settled hand is recorded, which is what the player actually meant.
-   */
-  useEffect(() => {
-    if (!isChordWorthKeeping(activeNotes)) return;
-    const timer = window.setTimeout(() => {
-      const chord = detectChord(activeNotes, settings.accidental);
-      if (!chord) return;
-      const numeral = romanNumeral(chord, settings.keyRoot, settings.mode);
-      chordHistory.push([...activeNotes], chord.symbol, numeral ?? undefined);
-    }, SETTLE_MS);
-    return () => window.clearTimeout(timer);
-  }, [activeNotes, settings.accidental, settings.keyRoot, settings.mode]);
-
-  /*
    * Build the audio graph on the first click or key press.
    *
    * A browser will not start an AudioContext without a gesture, and building it
@@ -400,7 +380,6 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           chordSymbol: chord?.symbol,
           chordNumeral: numeral ?? undefined,
           chordQuality: chord?.quality,
-          staffColumns: staffColumns(chordHistory.current, [...notes], chord?.symbol),
           images,
         },
       };

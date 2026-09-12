@@ -1,17 +1,30 @@
 /**
- * Backing-track player and metronome.
+ * Backing-track player.
  *
- * Speed changes preserve pitch. A plain playbackRate would transpose the track —
- * practising a piece at 70% speed a minor third flat is useless — so slowing
- * down uses overlap-add granular resynthesis: short grains are taken at the
- * original pitch and re-spaced in time.
+ * Built for practising to, which is a different job from playing music back.
+ * What a teacher actually needs is to slow a passage down without it changing
+ * key, loop four bars of it, drop the whole thing a tone to suit a voice, and
+ * hear a click that lines up with the recording rather than with a guess.
  *
- * The player feeds the audio engine's programme bus, so a backing track is
- * heard by the teacher, included in the mix and captured in the recording.
+ * Two decisions shape everything here.
+ *
+ * The first is that changing speed renders the whole track rather than
+ * processing it as it plays. Stretching audio well is not cheap, and doing it
+ * in real time means cutting corners that are audible. Rendering once, in a
+ * worker, costs a few seconds when the speed is changed and nothing at all
+ * afterwards — and playback is then an ordinary buffer, so looping is seamless
+ * and seeking is exact.
+ *
+ * The second is that positions are always in the original track's time, never
+ * the stretched one. A loop set at 1:12 stays at 1:12 when the speed changes,
+ * which is what anyone would expect and is not what falls out naturally.
  */
 
 import { audioEngine } from './audioEngine';
 import { beatLength, detectTempo, type TempoEstimate } from './tempo';
+import { trackBeats, nearestBar, nearestBeat, type BeatGrid } from './beats';
+import { peaksFor, renderPlan, type Peak } from './timeStretch';
+import type { StretchRequest, StretchResponse } from './stretchWorker';
 
 export type TrackInfo = {
   id: string;
@@ -19,6 +32,10 @@ export type TrackInfo = {
   duration: number;
   sampleRate: number;
   tempo: TempoEstimate;
+  /** Where the beats fall, for the grid, the metronome and snapping. */
+  grid: BeatGrid;
+  /** Waveform outline for drawing. */
+  peaks: Peak[];
 };
 
 export type PlayerState = {
@@ -26,41 +43,57 @@ export type PlayerState = {
   playing: boolean;
   position: number;
   speed: number;
-  /** Loop bounds in seconds; null when looping the whole track. */
+  /** Transposition in semitones; the speed is unaffected by it. */
+  semitones: number;
+  /** Loop bounds in seconds of the original track; null loops the whole thing. */
   loop: { start: number; end: number } | null;
   looping: boolean;
   metronome: boolean;
-  /** Tempo in use, which may be overridden from the detected value. */
+  /** Beats of count-in before the track starts. */
+  countIn: number;
+  /** True while a new speed or transposition is being rendered. */
+  rendering: boolean;
+  /** 0..1 while rendering. */
+  renderProgress: number;
   bpm: number;
+  volume: number;
 };
 
-/**
- * Grain length for time stretching. Long enough to carry pitch down to the bass
- * register, short enough that the smearing stays unobtrusive.
- */
-const GRAIN_SECONDS = 0.12;
-const GRAIN_OVERLAP = 0.5;
+/** How many peaks to keep. Enough for a wide window without wasting memory. */
+const PEAK_BUCKETS = 1600;
 
 export class TrackPlayer {
-  private buffer?: AudioBuffer;
+  /** The track as decoded, which is the reference for every position. */
+  private source?: AudioBuffer;
+  /** The track as rendered at the current speed and transposition. */
+  private rendered?: AudioBuffer;
   private info: TrackInfo | null = null;
+
   private gain?: GainNode;
   private metronomeGain?: GainNode;
+  private node?: AudioBufferSourceNode;
 
-  /** Scheduled grains, so a stop can cancel everything cleanly. */
-  private grains: AudioBufferSourceNode[] = [];
-  /** Straight playback node, used whenever the speed is normal. */
-  private direct?: AudioBufferSourceNode;
-  private scheduleTimer = 0;
-  private metronomeTimer = 0;
+  private worker?: Worker;
+  private renderId = 0;
+  private rendering = false;
+  private renderProgress = 0;
 
   private playing = false;
   private speed = 1;
+  private semitones = 0;
+  private rate = 1;
+  private factor = 1;
+
+  /** Context time and track time at the moment playback last started. */
   private startedAtContextTime = 0;
   private startedAtTrackTime = 0;
+  private pausedAt = 0;
+
   private loopRange: { start: number; end: number } | null = null;
   private looping = true;
   private metronomeOn = false;
+  private countIn = 0;
+  private metronomeTimer = 0;
   private bpmOverride: number | null = null;
   private volume = 0.8;
 
@@ -97,17 +130,28 @@ export class TrackPlayer {
    * Loading
    * ---------------------------------------------------------------- */
 
-  /** Decode a file and analyse its tempo. */
+  /** Decode a file, find its tempo and its beats, and outline its waveform. */
   async load(file: File): Promise<TrackInfo> {
     const ctx = audioEngine.ensure();
     const bytes = await file.arrayBuffer();
     const buffer = await ctx.decodeAudioData(bytes);
 
     // Analyse one channel; a mix-down would only blur the transients.
-    const tempo = detectTempo(buffer.getChannelData(0), buffer.sampleRate);
+    const mono = buffer.getChannelData(0);
+    const tempo = detectTempo(mono, buffer.sampleRate);
+    const grid = trackBeats(mono, buffer.sampleRate, tempo.bpm);
+    const channels = Array.from(
+      { length: buffer.numberOfChannels },
+      (_, i) => buffer.getChannelData(i),
+    );
 
     this.stop();
-    this.buffer = buffer;
+    this.source = buffer;
+    this.rendered = buffer;
+    this.speed = 1;
+    this.semitones = 0;
+    this.rate = 1;
+    this.factor = 1;
     this.bpmOverride = null;
     this.loopRange = null;
     this.info = {
@@ -116,6 +160,8 @@ export class TrackPlayer {
       duration: buffer.duration,
       sampleRate: buffer.sampleRate,
       tempo,
+      grid,
+      peaks: peaksFor(channels, PEAK_BUCKETS),
     };
     this.notify();
     return this.info;
@@ -123,7 +169,8 @@ export class TrackPlayer {
 
   unload(): void {
     this.stop();
-    this.buffer = undefined;
+    this.source = undefined;
+    this.rendered = undefined;
     this.info = null;
     this.notify();
   }
@@ -138,10 +185,15 @@ export class TrackPlayer {
       playing: this.playing,
       position: this.position,
       speed: this.speed,
+      semitones: this.semitones,
       loop: this.loopRange,
       looping: this.looping,
       metronome: this.metronomeOn,
+      countIn: this.countIn,
+      rendering: this.rendering,
+      renderProgress: this.renderProgress,
       bpm: this.bpm,
+      volume: this.volume,
     };
   }
 
@@ -149,17 +201,12 @@ export class TrackPlayer {
     return this.bpmOverride ?? this.info?.tempo.bpm ?? 120;
   }
 
-  setBpm(value: number): void {
-    this.bpmOverride = Math.min(300, Math.max(20, value));
-    if (this.metronomeOn) this.restartMetronome();
-    this.notify();
-  }
-
-  /** Current playhead in track seconds. */
+  /** Where the playhead is, in the original track's own time. */
   get position(): number {
-    if (!this.playing || !this.buffer) return this.startedAtTrackTime;
+    if (!this.playing || !this.source) return this.pausedAt;
     const ctx = audioEngine.context;
-    if (!ctx) return this.startedAtTrackTime;
+    if (!ctx) return this.pausedAt;
+    // Original time advances at the chosen speed, whatever the render did.
     const elapsed = (ctx.currentTime - this.startedAtContextTime) * this.speed;
     const raw = this.startedAtTrackTime + elapsed;
     const { start, end } = this.bounds();
@@ -168,8 +215,9 @@ export class TrackPlayer {
     return start + ((raw - start) % span + span) % span;
   }
 
+  /** Loop bounds, in original time, clamped to the track. */
   private bounds(): { start: number; end: number } {
-    const duration = this.buffer?.duration ?? 0;
+    const duration = this.source?.duration ?? 0;
     if (!this.loopRange) return { start: 0, end: duration };
     return {
       start: Math.max(0, Math.min(this.loopRange.start, duration)),
@@ -177,257 +225,349 @@ export class TrackPlayer {
     };
   }
 
-  play(from?: number): void {
-    if (!this.buffer) return;
-    const { ctx } = this.nodes();
-    void ctx.resume();
-    this.stopGrains();
-    const { start, end } = this.bounds();
-    this.startedAtTrackTime = Math.max(start, Math.min(from ?? this.position, end - 0.02));
-    this.startedAtContextTime = ctx.currentTime;
-    this.playing = true;
-
-    if (this.usesGranular) {
-      this.scheduleAhead();
-      this.scheduleTimer = window.setInterval(() => this.scheduleAhead(), 60);
-    } else {
-      this.playDirect(this.startedAtTrackTime);
-    }
-
-    if (this.metronomeOn) this.restartMetronome();
-    this.notify();
+  play(): void {
+    if (!this.source || this.playing) return;
+    void audioEngine.resume();
+    this.startAt(this.pausedAt);
   }
 
   pause(): void {
-    const at = this.position;
-    this.stopGrains();
+    if (!this.playing) return;
+    this.pausedAt = this.position;
+    this.stopNode();
     this.playing = false;
-    this.startedAtTrackTime = at;
-    window.clearInterval(this.scheduleTimer);
-    this.scheduleTimer = 0;
     this.stopMetronome();
     this.notify();
   }
 
   stop(): void {
-    this.stopGrains();
+    this.stopNode();
     this.playing = false;
-    this.startedAtTrackTime = this.bounds().start;
-    window.clearInterval(this.scheduleTimer);
-    this.scheduleTimer = 0;
+    this.pausedAt = this.bounds().start;
     this.stopMetronome();
     this.notify();
   }
 
   seek(seconds: number): void {
     const { start, end } = this.bounds();
-    const target = Math.max(start, Math.min(seconds, end));
-    if (this.playing) this.play(target);
-    else { this.startedAtTrackTime = target; this.notify(); }
+    const at = Math.max(start, Math.min(end, seconds));
+    this.pausedAt = at;
+    if (this.playing) {
+      this.stopNode();
+      this.startAt(at);
+    } else {
+      this.notify();
+    }
   }
 
   /**
-   * Playback speed. 1 is original; 0.5 is half speed at the same pitch.
+   * Start the rendered buffer at a position given in original time.
+   *
+   * The rendered buffer runs on its own clock — a track stretched to 140% is
+   * half as long again — so the position has to be converted on the way in.
    */
-  setSpeed(value: number): void {
-    const next = Math.min(2, Math.max(0.25, value));
-    if (Math.abs(next - this.speed) < 0.001) return;
-    const at = this.position;
-    this.speed = next;
-    if (this.playing) this.play(at);
-    else this.notify();
+  private startAt(trackTime: number): void {
+    const buffer = this.rendered;
+    if (!buffer) return;
+    const { ctx, gain } = this.nodes();
+    const { start, end } = this.bounds();
+
+    const node = ctx.createBufferSource();
+    node.buffer = buffer;
+    node.playbackRate.value = this.rate;
+
+    if (this.looping) {
+      node.loop = true;
+      node.loopStart = start * this.factor;
+      node.loopEnd = end * this.factor;
+    } else {
+      node.onended = () => {
+        // Reaching the end of a track that is not looping simply stops it.
+        if (this.playing && this.node === node) this.pause();
+      };
+    }
+
+    node.connect(gain);
+    const countInSeconds = this.countIn > 0 ? this.countIn * beatLength(this.bpm) : 0;
+    const startAt = ctx.currentTime + countInSeconds;
+    node.start(startAt, trackTime * this.factor);
+
+    this.node = node;
+    this.playing = true;
+    this.startedAtContextTime = startAt;
+    this.startedAtTrackTime = trackTime;
+    if (countInSeconds > 0) this.tickCountIn(ctx, startAt);
+    this.startMetronome();
+    this.notify();
   }
+
+  private stopNode(): void {
+    if (!this.node) return;
+    try { this.node.onended = null; this.node.stop(); } catch { /* already stopped */ }
+    try { this.node.disconnect(); } catch { /* already gone */ }
+    this.node = undefined;
+  }
+
+  /* ---------------------------------------------------------------- *
+   * Speed and transposition
+   * ---------------------------------------------------------------- */
+
+  setSpeed(value: number): void {
+    const next = Math.max(0.25, Math.min(2, value));
+    if (Math.abs(next - this.speed) < 1e-6) return;
+    this.speed = next;
+    void this.render();
+  }
+
+  /**
+   * Nudge the transposition.
+   *
+   * Relative rather than absolute because the caller is a button, and two quick
+   * presses both read the same value if each has to work out the new one from a
+   * copy of the state that React has not refreshed yet.
+   */
+  transposeBy(delta: number): void {
+    this.setSemitones(this.semitones + delta);
+  }
+
+  /** Transpose without changing the speed. */
+  setSemitones(value: number): void {
+    const next = Math.max(-12, Math.min(12, Math.round(value)));
+    if (next === this.semitones) return;
+    this.semitones = next;
+    void this.render();
+  }
+
+  /**
+   * Re-render the track for the current speed and transposition.
+   *
+   * Playback carries on at the old setting until the new render lands, so
+   * dragging a speed slider does not stutter. A render that is superseded is
+   * simply thrown away when it arrives.
+   */
+  private async render(): Promise<void> {
+    const source = this.source;
+    if (!source) return;
+    const plan = renderPlan(this.speed, this.semitones);
+
+    // Nothing to resynthesise: play the decoded audio and set the rate.
+    if (Math.abs(plan.factor - 1) < 1e-6) {
+      this.applyRender(source, plan.factor, plan.rate);
+      return;
+    }
+
+    const id = ++this.renderId;
+    this.rendering = true;
+    this.renderProgress = 0;
+    this.notify();
+
+    const channels = Array.from(
+      { length: source.numberOfChannels },
+      (_, i) => Float32Array.from(source.getChannelData(i)),
+    );
+
+    try {
+      const out = await this.runWorker(id, channels, plan.factor);
+      if (id !== this.renderId) return; // Superseded by a later change.
+      const ctx = audioEngine.ensure();
+      const buffer = ctx.createBuffer(out.length, out[0].length, source.sampleRate);
+      out.forEach((channel, index) => buffer.copyToChannel(channel as Float32Array<ArrayBuffer>, index));
+      this.applyRender(buffer, plan.factor, plan.rate);
+    } catch {
+      // A failed render leaves the previous one playing, which is the least
+      // disruptive outcome; the speed control simply appears not to take.
+      if (id === this.renderId) {
+        this.rendering = false;
+        this.notify();
+      }
+    }
+  }
+
+  private runWorker(id: number, channels: Float32Array[], factor: number): Promise<Float32Array[]> {
+    if (!this.worker) {
+      this.worker = new Worker(new URL('./stretchWorker.ts', import.meta.url), { type: 'module' });
+    }
+    const worker = this.worker;
+
+    return new Promise((resolve, reject) => {
+      const onMessage = (event: MessageEvent<StretchResponse>) => {
+        const message = event.data;
+        if (message.id !== id) return;
+        if (message.kind === 'progress') {
+          this.renderProgress = message.fraction;
+          this.notify();
+          return;
+        }
+        worker.removeEventListener('message', onMessage);
+        if (message.kind === 'done') resolve(message.channels);
+        else reject(new Error(message.message));
+      };
+      worker.addEventListener('message', onMessage);
+      const request: StretchRequest = { id, channels, factor };
+      worker.postMessage(request, channels.map(c => c.buffer) as Transferable[]);
+    });
+  }
+
+  /** Swap in a freshly rendered buffer, keeping the playhead where it was. */
+  private applyRender(buffer: AudioBuffer, factor: number, rate: number): void {
+    const at = this.position;
+    const wasPlaying = this.playing;
+    this.stopNode();
+    this.rendered = buffer;
+    this.factor = factor;
+    this.rate = rate;
+    this.rendering = false;
+    this.renderProgress = 1;
+    this.pausedAt = at;
+    if (wasPlaying) this.startAt(at);
+    else {
+      this.playing = false;
+      this.notify();
+    }
+  }
+
+  /* ---------------------------------------------------------------- *
+   * Looping
+   * ---------------------------------------------------------------- */
 
   setLoop(range: { start: number; end: number } | null): void {
     this.loopRange = range;
-    if (this.playing) this.play(this.position);
+    if (this.playing) this.seek(Math.max(this.position, range?.start ?? 0));
     else this.notify();
   }
 
   setLooping(value: boolean): void {
     this.looping = value;
-    this.notify();
-  }
-
-  setVolume(value: number): void {
-    this.volume = Math.min(1, Math.max(0, value));
-    if (this.gain) this.gain.gain.value = this.volume;
-    this.notify();
-  }
-
-  /* ---------------------------------------------------------------- *
-   * Granular time stretch
-   * ---------------------------------------------------------------- */
-
-  private nextGrainAt = 0;
-
-  /**
-   * Schedule grains a little ahead of the playhead.
-   *
-   * Each grain plays at rate 1 — original pitch — but grains are spaced by
-   * `grain * speed` in output time, so the track advances faster or slower
-   * without transposing. At speed 1 this reduces to ordinary playback.
-   */
-  private scheduleAhead(): void {
-    if (!this.playing || !this.buffer) return;
-    const { ctx, gain } = this.nodes();
-    const horizon = ctx.currentTime + 0.3;
-    const { start, end } = this.bounds();
-    // Synthesis hop. Grains are twice this long, so consecutive grains overlap
-    // by half.
-    const step = GRAIN_SECONDS * (1 - GRAIN_OVERLAP);
-
-    if (this.nextGrainAt < ctx.currentTime) this.nextGrainAt = ctx.currentTime + 0.02;
-
-    while (this.nextGrainAt < horizon) {
-      const outputElapsed = this.nextGrainAt - this.startedAtContextTime;
-      let trackTime = this.startedAtTrackTime + outputElapsed * this.speed;
-
-      if (trackTime >= end) {
-        if (!this.looping) { this.pause(); return; }
-        const span = Math.max(0.05, end - start);
-        trackTime = start + ((trackTime - start) % span);
-      }
-
-      const source = ctx.createBufferSource();
-      source.buffer = this.buffer;
-
-      // A triangular window: up over the first half, down over the second, with
-      // no flat top. At 50% overlap a pair of these sums to exactly one. A
-      // window with a flat top does not — overlapping pairs exceed unity and
-      // modulate the amplitude at the grain rate, which is audible as a wobble.
-      const envelope = ctx.createGain();
-      const half = GRAIN_SECONDS / 2;
-      envelope.gain.setValueAtTime(0, this.nextGrainAt);
-      envelope.gain.linearRampToValueAtTime(1, this.nextGrainAt + half);
-      envelope.gain.linearRampToValueAtTime(0, this.nextGrainAt + GRAIN_SECONDS);
-
-      source.connect(envelope);
-      envelope.connect(gain);
-      try {
-        source.start(this.nextGrainAt, Math.max(0, trackTime), GRAIN_SECONDS);
-      } catch {
-        // A seek can leave a grain scheduled in the past; skip it.
-      }
-      source.onended = () => {
-        this.grains = this.grains.filter(item => item !== source);
-        try { envelope.disconnect(); } catch { /* already gone */ }
-      };
-      this.grains.push(source);
-
-      this.nextGrainAt += step;
-    }
+    if (this.playing) this.seek(this.position);
+    else this.notify();
   }
 
   /**
-   * Play the buffer straight through, untouched.
-   *
-   * At normal speed there is nothing to stretch, so the track must not go
-   * anywhere near the granular path: chopping audio into grains and overlapping
-   * them can only degrade it. This is what a loaded track does by default.
+   * Loop a number of bars from a moment, snapped to where the bars actually
+   * start — which is the point of tracking beats rather than only tempo.
    */
-  private playDirect(from: number): void {
-    if (!this.buffer) return;
-    const { ctx, gain } = this.nodes();
-    const { start, end } = this.bounds();
-
-    const source = ctx.createBufferSource();
-    source.buffer = this.buffer;
-    if (this.looping) {
-      source.loop = true;
-      source.loopStart = start;
-      source.loopEnd = end;
-    }
-    source.connect(gain);
-    source.onended = () => {
-      if (this.direct === source) {
-        this.direct = undefined;
-        // A non-looping track that reached the end simply stops.
-        if (this.playing && !this.looping) this.pause();
-      }
-    };
-    try {
-      source.start(ctx.currentTime, Math.max(0, Math.min(from, end - 0.01)));
-    } catch {
+  loopBars(from: number, bars: number): void {
+    const grid = this.info?.grid;
+    const duration = this.source?.duration ?? 0;
+    if (!grid || !grid.beats.length) {
+      // No grid to snap to, so fall back to bars of the nominal tempo.
+      const span = beatLength(this.bpm) * (grid?.beatsPerBar ?? 4);
+      this.setLoop({ start: from, end: Math.min(duration, from + span * bars) });
       return;
     }
-    this.direct = source;
+    const start = nearestBar(from, grid);
+    const beatsAhead = bars * grid.beatsPerBar;
+    const startIndex = grid.beats.indexOf(start);
+    const endIndex = startIndex >= 0 ? startIndex + beatsAhead : -1;
+    const end = endIndex >= 0 && endIndex < grid.beats.length
+      ? grid.beats[endIndex]
+      : Math.min(duration, start + beatLength(this.bpm) * beatsAhead);
+    this.setLoop({ start, end });
   }
 
-  private get usesGranular(): boolean {
-    return Math.abs(this.speed - 1) > 0.005;
-  }
-
-  private stopGrains(): void {
-    if (this.direct) {
-      const node = this.direct;
-      this.direct = undefined;
-      node.onended = null;
-      try { node.stop(); } catch { /* already stopped */ }
-      try { node.disconnect(); } catch { /* already gone */ }
-    }
-    this.grains.forEach(source => {
-      try { source.stop(); } catch { /* already stopped */ }
-      try { source.disconnect(); } catch { /* already gone */ }
-    });
-    this.grains = [];
-    this.nextGrainAt = 0;
+  /** Snap a moment to the nearest beat, for setting loop points by hand. */
+  snap(time: number, toBar = false): number {
+    const grid = this.info?.grid;
+    if (!grid || !grid.beats.length) return time;
+    return toBar ? nearestBar(time, grid) : nearestBeat(time, grid.beats);
   }
 
   /* ---------------------------------------------------------------- *
-   * Metronome
+   * Metronome and count-in
    * ---------------------------------------------------------------- */
 
-  setMetronome(on: boolean): void {
-    this.metronomeOn = on;
-    if (on) this.restartMetronome();
+  setMetronome(value: boolean): void {
+    this.metronomeOn = value;
+    if (value && this.playing) this.startMetronome();
     else this.stopMetronome();
     this.notify();
   }
 
-  private metronomeBeat = 0;
-  private nextClickAt = 0;
+  setCountIn(beats: number): void {
+    this.countIn = Math.max(0, Math.min(8, Math.round(beats)));
+    this.notify();
+  }
 
-  private restartMetronome(): void {
+  setBpm(value: number): void {
+    this.bpmOverride = Math.max(30, Math.min(300, Math.round(value)));
+    this.notify();
+  }
+
+  setVolume(value: number): void {
+    this.volume = Math.max(0, Math.min(1, value));
+    if (this.gain && audioEngine.context) {
+      this.gain.gain.setTargetAtTime(this.volume, audioEngine.context.currentTime, 0.02);
+    }
+    this.notify();
+  }
+
+  /** A short click. Accented ones mark the first beat of the bar. */
+  private click(at: number, accent: boolean): void {
+    const { ctx, metronome } = this.nodes();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = accent ? 1600 : 1000;
+    gain.gain.setValueAtTime(0, at);
+    gain.gain.linearRampToValueAtTime(accent ? 0.5 : 0.3, at + 0.001);
+    gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.05);
+    osc.connect(gain);
+    gain.connect(metronome);
+    osc.start(at);
+    osc.stop(at + 0.08);
+    osc.onended = () => { try { gain.disconnect(); } catch { /* noop */ } };
+  }
+
+  /** Click the count-in, which happens before the track starts. */
+  private tickCountIn(ctx: AudioContext, startAt: number): void {
+    const beat = beatLength(this.bpm);
+    for (let i = 0; i < this.countIn; i += 1) {
+      this.click(startAt - (this.countIn - i) * beat, i === 0);
+    }
+  }
+
+  /**
+   * Schedule clicks on the tracked beats.
+   *
+   * Using the grid rather than a fixed interval is what keeps the click with
+   * the music: a track that was recorded to a human performance drifts, and a
+   * metronome running off the average tempo walks away from it within a minute.
+   */
+  private startMetronome(): void {
     this.stopMetronome();
-    const { ctx } = this.nodes();
-    void ctx.resume();
-    this.metronomeBeat = 0;
-    this.nextClickAt = ctx.currentTime + 0.05;
-    this.metronomeTimer = window.setInterval(() => this.scheduleClicks(), 60);
-    this.scheduleClicks();
+    if (!this.metronomeOn || !this.playing) return;
+    const ctx = audioEngine.context;
+    const grid = this.info?.grid;
+    if (!ctx || !grid) return;
+
+    const lookahead = 0.4;
+    let scheduledTo = 0;
+
+    const pump = () => {
+      if (!this.playing || !this.metronomeOn) return;
+      const now = this.position;
+      const until = now + lookahead * this.speed;
+      const beats = grid.beats.length
+        ? grid.beats
+        : // No grid: fall back to an even pulse at the chosen tempo.
+        Array.from({ length: 64 }, (_, i) => i * beatLength(this.bpm));
+
+      beats.forEach((beat, index) => {
+        if (beat <= Math.max(now, scheduledTo) || beat > until) return;
+        // Track time to wall-clock: the gap shrinks as the speed rises.
+        const at = ctx.currentTime + (beat - now) / this.speed;
+        const downbeat = grid.beatsPerBar > 1
+          && (index - grid.firstDownbeat) % grid.beatsPerBar === 0;
+        this.click(at, downbeat);
+      });
+      scheduledTo = until;
+      this.metronomeTimer = window.setTimeout(pump, (lookahead / 2) * 1000);
+    };
+    pump();
   }
 
   private stopMetronome(): void {
-    window.clearInterval(this.metronomeTimer);
+    if (this.metronomeTimer) window.clearTimeout(this.metronomeTimer);
     this.metronomeTimer = 0;
-  }
-
-  /** Click at the working tempo, accented on the downbeat of each bar. */
-  private scheduleClicks(): void {
-    if (!this.metronomeOn) return;
-    const { ctx, metronome } = this.nodes();
-    const horizon = ctx.currentTime + 0.3;
-    // The metronome follows the heard tempo, so it stays with a slowed track.
-    const interval = beatLength(this.bpm) / (this.playing ? this.speed : 1);
-
-    while (this.nextClickAt < horizon) {
-      const accent = this.metronomeBeat % 4 === 0;
-      const osc = ctx.createOscillator();
-      const envelope = ctx.createGain();
-      osc.frequency.value = accent ? 1600 : 1100;
-      envelope.gain.setValueAtTime(0, this.nextClickAt);
-      envelope.gain.linearRampToValueAtTime(accent ? 0.5 : 0.3, this.nextClickAt + 0.002);
-      envelope.gain.exponentialRampToValueAtTime(0.0001, this.nextClickAt + 0.05);
-      osc.connect(envelope);
-      envelope.connect(metronome);
-      osc.start(this.nextClickAt);
-      osc.stop(this.nextClickAt + 0.06);
-      osc.onended = () => { try { envelope.disconnect(); } catch { /* noop */ } };
-
-      this.metronomeBeat++;
-      this.nextClickAt += interval;
-    }
   }
 }
 

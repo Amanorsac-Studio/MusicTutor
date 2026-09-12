@@ -18,7 +18,6 @@ import { cameraHub } from '../lib/cameraHub';
 import { findBackdrop } from '../lib/backdrops';
 import type { Accidental } from '../lib/chords';
 import { drawStaff } from '../lib/drawStaff';
-import { chordHistory, staffColumns, type ChordEntry } from '../lib/chordHistory';
 
 const HANDLES: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
 
@@ -452,8 +451,6 @@ function StaffView({
   nameNotes: boolean;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
-  const [history, setHistory] = useState<ChordEntry[]>([]);
-  useEffect(() => chordHistory.subscribe(setHistory), []);
   // A key that changes whenever the sounding notes do, so the effect reruns
   // without depending on a Set's identity.
   const notes = [...active].sort((a, b) => a - b).join(',');
@@ -465,14 +462,14 @@ function StaffView({
     const sounding = notes ? notes.split(',').map(Number) : [];
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     drawStaff(ctx, { width: canvas.width, height: canvas.height }, {
-      columns: staffColumns(history, sounding, liveLabel),
+      columns: [{ id: 'live', notes: sounding, label: liveLabel, live: true }],
       accidental,
       accent,
       ink,
       paper,
       showLabels: nameNotes,
     });
-  }, [notes, history, liveLabel, accidental, accent, ink, paper, nameNotes]);
+  }, [notes, liveLabel, accidental, accent, ink, paper, nameNotes]);
 
   return <canvas className="source-staff" ref={ref} width={760} height={400} />;
 }

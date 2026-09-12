@@ -468,3 +468,16 @@ kbd{min-width:84px;text-align:center;padding:6px 9px;border:1px solid #34495b;bo
 .cable-rows b{font-size:11px}
 .cable-rows small{font-size:9px;color:#72869a;margin-top:3px}
 .cable-rows .subtle-btn{width:auto;margin:0;padding:6px 10px}
+
+/* Backing-track waveform and its controls */
+.waveform{width:100%;height:84px;margin-top:11px;border:1px solid #1c3244;border-radius:7px;overflow:hidden;cursor:crosshair}
+.waveform canvas{display:block;touch-action:none}
+.render-bar{position:relative;height:18px;border:1px solid #24425c;background:#0a1725;border-radius:5px;margin-top:9px;overflow:hidden}
+.render-bar i{display:block;height:100%;background:linear-gradient(90deg,#155e8f,#1d9cff);transition:width .12s linear}
+.render-bar small{position:absolute;inset:0;display:grid;place-items:center;font-size:9px;color:#dbe8f2}
+.transpose-row{display:grid;grid-template-columns:30px 1fr 30px auto;gap:7px;align-items:center;margin-top:6px}
+.transpose-row>button{border:1px solid #263c50;background:#101f2d;color:#b4c1cd;border-radius:6px;height:28px;display:grid;place-items:center;cursor:pointer}
+.transpose-row>button:hover:not(:disabled){background:#16283a;color:#fff}
+.transpose-row>button:disabled{opacity:.45;cursor:default}
+.transpose-row b{text-align:center;font-size:10px;color:#cfdbe6}
+.transpose-row .subtle-btn{width:auto;margin:0;padding:6px 9px;font-size:9px}

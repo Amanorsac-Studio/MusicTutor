@@ -8,10 +8,12 @@
 
 import { useEffect, useRef, useState } from 'react';
 import {
-  Gauge, Music4, Pause, Play, Repeat, RotateCcw, Square, Timer, Trash2, Upload, Volume2,
+  Gauge, Minus, Music4, Pause, Play, Plus, Repeat, RotateCcw, Square, Timer, Trash2,
+  Upload, Volume2,
 } from 'lucide-react';
 import { trackPlayer } from '../lib/player';
-import { beatPosition, snapToBeat } from '../lib/tempo';
+import { Waveform } from './Waveform';
+import type { BeatGrid } from '../lib/beats';
 
 const formatTime = (seconds: number): string => {
   if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
@@ -21,6 +23,26 @@ const formatTime = (seconds: number): string => {
 
 /** Speeds a teacher actually uses when drilling a passage. */
 const SPEEDS = [0.5, 0.6, 0.7, 0.8, 0.9, 1];
+
+/** Bar counts worth a button each; anything else is a drag on the waveform. */
+const LOOP_BARS = [1, 2, 4, 8];
+
+/**
+ * Which bar and beat the playhead is in, counted from the tracked beats.
+ *
+ * Counting real beats rather than dividing by the tempo means the reading stays
+ * right through a track that speeds up or slows down.
+ */
+function barAndBeat(position: number, grid: BeatGrid): string {
+  const { beats, beatsPerBar, firstDownbeat } = grid;
+  if (!beats.length) return 'No beat grid';
+  let index = 0;
+  while (index + 1 < beats.length && beats[index + 1] <= position) index += 1;
+  const fromDownbeat = index - firstDownbeat;
+  const bar = Math.floor(fromDownbeat / beatsPerBar) + 1;
+  const beat = (((fromDownbeat % beatsPerBar) + beatsPerBar) % beatsPerBar) + 1;
+  return `Bar ${bar} · beat ${beat}`;
+}
 
 export function TrackPanel() {
   const [state, setState] = useState(trackPlayer.state);
@@ -52,13 +74,8 @@ export function TrackPanel() {
     }
   };
 
-  /** Loop the bar around the playhead, snapped to the beat grid. */
-  const loopFourBars = () => {
-    if (!track) return;
-    const beat = 60 / state.bpm;
-    const start = snapToBeat(state.position, state.bpm, track.tempo.offset);
-    trackPlayer.setLoop({ start, end: Math.min(track.duration, start + beat * 16) });
-  };
+  /** Loop whole bars from the playhead, snapped to where the bars really are. */
+  const loopBars = (bars: number) => trackPlayer.loopBars(state.position, bars);
 
   return (
     <div className="track-panel">
@@ -144,22 +161,22 @@ export function TrackPanel() {
             </span>
           </div>
 
-          <input
-            className="track-scrub"
-            type="range"
-            min={0}
-            max={Math.max(0.1, track.duration)}
-            step={0.01}
-            aria-label="Position"
-            value={state.position}
-            onChange={event => trackPlayer.seek(Number(event.target.value))}
+          <Waveform
+            peaks={track.peaks}
+            duration={track.duration}
+            position={state.position}
+            loop={state.loop}
+            grid={track.grid}
+            snap={(time, toBar) => trackPlayer.snap(time, toBar)}
+            onSeek={time => trackPlayer.seek(time)}
+            onLoop={range => trackPlayer.setLoop(range)}
           />
+          <small className="field-hint">
+            Click to move the playhead, drag to set a loop. Both land on the beat; hold
+            shift to land on the bar.
+          </small>
 
-          <div className="track-bar">
-            Bar {beatPosition(state.position, state.bpm, track.tempo.offset).bar}
-            {' · '}
-            beat {beatPosition(state.position, state.bpm, track.tempo.offset).beat}
-          </div>
+          <div className="track-bar">{barAndBeat(state.position, track.grid)}</div>
 
           {/* Speed — pitch is preserved, which is the point */}
           <label className="section-label">Speed</label>
@@ -173,7 +190,44 @@ export function TrackPanel() {
               >{Math.round(speed * 100)}%</button>
             ))}
           </div>
-          <small className="field-hint">Pitch stays put, so a slowed track is still in the same key.</small>
+          {state.rendering && (
+            <div className="render-bar">
+              <i style={{ width: `${Math.round(state.renderProgress * 100)}%` }} />
+              <small>Re-rendering · {Math.round(state.renderProgress * 100)}%</small>
+            </div>
+          )}
+          <small className="field-hint">
+            Pitch stays put, so a slowed track is still in the same key. Changing the
+            speed re-renders the track once, which takes a moment and then costs nothing
+            while it plays.
+          </small>
+
+          {/* Transposition, which is independent of the speed */}
+          <label className="section-label">Key</label>
+          <div className="transpose-row">
+            <button
+              aria-label="Down a semitone"
+              onClick={() => trackPlayer.transposeBy(-1)}
+            ><Minus size={13} /></button>
+            <b>
+              {state.semitones === 0
+                ? 'Original key'
+                : `${state.semitones > 0 ? '+' : ''}${state.semitones} semitone${Math.abs(state.semitones) === 1 ? '' : 's'}`}
+            </b>
+            <button
+              aria-label="Up a semitone"
+              onClick={() => trackPlayer.transposeBy(1)}
+            ><Plus size={13} /></button>
+            <button
+              className="subtle-btn"
+              disabled={state.semitones === 0}
+              onClick={() => trackPlayer.setSemitones(0)}
+            >Reset</button>
+          </div>
+          <small className="field-hint">
+            Moves the track to another key without changing its speed, for a singer or a
+            transposing instrument that does not match the recording.
+          </small>
 
           {/* Looping */}
           <label className="section-label">Loop</label>
@@ -183,7 +237,11 @@ export function TrackPanel() {
               aria-pressed={state.looping}
               onClick={() => trackPlayer.setLooping(!state.looping)}
             ><Repeat size={13} />{state.looping ? 'Looping' : 'Loop off'}</button>
-            <button onClick={loopFourBars}><Timer size={13} />Loop 4 bars</button>
+            {LOOP_BARS.map(bars => (
+              <button key={bars} onClick={() => loopBars(bars)}>
+                <Timer size={13} />{bars} bar{bars === 1 ? '' : 's'}
+              </button>
+            ))}
             <button onClick={() => trackPlayer.setLoop(null)}>Whole track</button>
           </div>
           {state.loop && (
@@ -201,13 +259,29 @@ export function TrackPanel() {
               onClick={() => trackPlayer.setMetronome(!state.metronome)}
             ><Timer size={13} />{state.metronome ? 'Clicking' : 'Click off'}</button>
           </div>
+          <small className="field-hint">
+            The click follows the beats found in the track rather than an even pulse, so
+            it stays with a performance that breathes.
+          </small>
+
+          <label className="section-label">Count-in</label>
+          <div className="inspector-buttons">
+            {[0, 2, 4].map(beats => (
+              <button
+                key={beats}
+                className={state.countIn === beats ? 'active' : ''}
+                aria-pressed={state.countIn === beats}
+                onClick={() => trackPlayer.setCountIn(beats)}
+              >{beats === 0 ? 'None' : `${beats} beats`}</button>
+            ))}
+          </div>
 
           <label className="inspector-field wide">
             <span><Volume2 size={12} /> Track volume</span>
             <input
               type="range" min={0} max={100}
               aria-label="Track volume"
-              defaultValue={80}
+              value={Math.round(state.volume * 100)}
               onChange={event => trackPlayer.setVolume(Number(event.target.value) / 100)}
             />
           </label>
