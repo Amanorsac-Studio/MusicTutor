@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  AudioLines, Camera, Headphones, Keyboard, Piano, Play, Plus, RotateCcw, Volume2, X, Zap,
+  AudioLines, Cable, Camera, Gauge, Headphones, Keyboard, Piano, Play, Plus, RotateCcw, Volume2, X, Zap,
 } from 'lucide-react';
 import { DeviceSelect, Select } from '../components/Select';
 import { Meter, Toggle, formatDb } from '../components/common';
@@ -18,8 +18,17 @@ export function Devices() {
   } = useStudio();
 
   const [permission, setPermission] = useState<'idle' | 'pending' | 'ready' | 'blocked'>('idle');
-  const [routes, setRoutes] = useState<Record<string, string>>({});
-  const [midiInputId, setMidiInputId] = useState('');
+  const [outputLatency, setOutputLatency] = useState(0);
+
+  // The figure only exists once the graph is running, and it can change when
+  // the monitoring device changes, so it is polled rather than read once.
+  useEffect(() => {
+    const tick = () => setOutputLatency(audioEngine.outputLatencyMs);
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
 
   const connect = async () => {
     setPermission('pending');
@@ -51,7 +60,6 @@ export function Devices() {
   };
 
   const assignInput = async (slotId: string, deviceId: string, label: string, isVoice: boolean) => {
-    setRoutes(current => ({ ...current, [slotId]: deviceId }));
     if (!deviceId) {
       detachInput(slotId);
       return;
@@ -163,7 +171,7 @@ export function Devices() {
                   <Meter level={level} label={`${slot.label} level`} />
                   <DeviceSelect
                     devices={catalog.audioInputs}
-                    value={routes[slot.id] ?? ''}
+                    value={channel?.deviceId ?? ''}
                     onChange={value => void assignInput(slot.id, value, slot.label, slot.isVoice)}
                     label={`${slot.label} source`}
                     emptyLabel="No inputs found"
@@ -176,10 +184,23 @@ export function Devices() {
           </div>
           <p className="panel-hint">
             Inputs are captured with echo cancellation, noise suppression and auto gain all
-            switched off, so a line input or a virtual cable arrives unprocessed. To capture a
-            plug-in host such as Kontakt, route its output to a virtual audio device and pick
-            that device on the App audio slot.
+            switched off, so a line input or a virtual cable arrives unprocessed.
           </p>
+          <div className="tip">
+            <Cable />
+            <p>
+              <b>Getting Kontakt or another plug-in into the app.</b> Windows will not let one
+              app listen to another directly, so the sound has to travel through a virtual
+              audio device. Install VB-Audio Cable or VoiceMeeter, set Kontakt's output to that
+              cable, then choose the same cable here on the App audio slot. Kontakt is best run
+              standalone rather than inside a DAW, and set to WASAPI or ASIO with a 128 or 256
+              sample buffer so it stays in time with the keyboard. You will stop hearing Kontakt
+              on your speakers once its output goes to the cable, so monitor through this app
+              instead. The alternative, if your audio interface has physical outputs and
+              inputs, is a short cable from output back to input, which works with no software
+              at all.
+            </p>
+          </div>
         </section>
 
         <section className="content-card">
@@ -193,11 +214,8 @@ export function Devices() {
           </div>
           <Select
             label="MIDI input device"
-            value={midiInputId}
-            onChange={value => {
-              setMidiInputId(value);
-              midiManager.setEnabledInputs(value ? [value] : undefined);
-            }}
+            value={settings.midiInputId}
+            onChange={value => updateSettings({ midiInputId: value })}
             options={[
               { value: '', label: catalog.midiInputs.length ? 'All MIDI inputs' : (catalog.midi.message ?? 'No MIDI devices detected') },
               ...catalog.midiInputs.map(port => ({
@@ -227,6 +245,48 @@ export function Devices() {
           <button className="subtle-btn" onClick={() => void refreshDevices(false)}>
             <RotateCcw size={14} />Rescan MIDI
           </button>
+        </section>
+
+        <section className="content-card">
+          <div className="card-title">
+            <div><Gauge /><span><b>Latency</b><small>Delay between playing and hearing</small></span></div>
+            <b className="monitor-value">{outputLatency ? `${outputLatency} ms` : '—'}</b>
+          </div>
+          <div className="device-rows">
+            <div>
+              <span className="device-num">1</span>
+              <span>
+                <b>Output path</b>
+                <small>Audio graph plus the Windows driver and the device itself</small>
+              </span>
+              <span />
+              <b className="db">{outputLatency ? `${outputLatency} ms` : 'Play a note'}</b>
+            </div>
+            {INPUT_SLOTS.map((slot, index) => {
+              const channel = channelFor(slot.id);
+              if (!channel?.connected) return null;
+              const capture = audioEngine.inputLatencyMs(slot.id);
+              return (
+                <div key={slot.id}>
+                  <span className="device-num">{index + 2}</span>
+                  <span>
+                    <b>{slot.label} capture</b>
+                    <small>{channel.trackLabel ?? 'Connected'}</small>
+                  </span>
+                  <span />
+                  <b className="db">{capture ? `${capture} ms` : 'not reported'}</b>
+                </div>
+              );
+            })}
+          </div>
+          <p className="panel-hint">
+            MIDI notes reach the built-in instrument with no added buffering, so the
+            figure above is the whole delay you feel. Under about 15 ms is imperceptible
+            and under 30 ms is comfortable for teaching. If it is worse than that, the
+            usual cause is a shared Windows audio device: install the ASIO driver that
+            came with your interface, or use a virtual device set to a 128 or 256 sample
+            buffer, and close other apps holding the sound card open.
+          </p>
         </section>
 
         <section className="content-card">

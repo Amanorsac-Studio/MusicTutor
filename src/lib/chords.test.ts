@@ -212,7 +212,35 @@ describe('key context and Roman numerals', () => {
     expect(romanNumeral(detectChord(chord(67, 0, 4, 7, 10))!, 0, 'major')).toBe('V7');
   });
 
-  it('returns null for a chord outside the key', () => {
-    expect(romanNumeral(detectChord(chord(61, 0, 4, 7))!, 0, 'major')).toBeNull();
+  it('numbers chords from outside the key with an accidental', () => {
+    // Borrowed and chromatic chords are everyday harmony; leaving them unnamed
+    // made the number readout go blank exactly when it was most interesting.
+    expect(romanNumeral(detectChord(chord(61, 0, 4, 7))!, 0, 'major')).toBe('♭II');
+    expect(romanNumeral(detectChord(chord(63, 0, 4, 7))!, 0, 'major')).toBe('♭III');
+    expect(romanNumeral(detectChord(chord(66, 0, 4, 7))!, 0, 'major')).toBe('♯IV');
+    expect(romanNumeral(detectChord(chord(68, 0, 4, 7))!, 0, 'major')).toBe('♭VI');
+    expect(romanNumeral(detectChord(chord(70, 0, 4, 7))!, 0, 'major')).toBe('♭VII');
+  });
+
+  it('covers all twelve semitones, so nothing is ever unnamed', () => {
+    const seen = new Set<string>();
+    for (let semitone = 0; semitone < 12; semitone++) {
+      const numeral = romanNumeral(detectChord(chord(60 + semitone, 0, 4, 7))!, 0, 'major');
+      expect(numeral).toBeTruthy();
+      seen.add(numeral!);
+    }
+    expect(seen.size).toBe(12);
+  });
+
+  it('keeps accidentals on borrowed chords in a minor key', () => {
+    // The number system reads a minor key against the major scale, so the
+    // natural-minor thirds and sevenths carry flats.
+    expect(romanNumeral(detectChord(chord(63, 0, 4, 7))!, 0, 'minor')).toBe('♭III');
+    expect(romanNumeral(detectChord(chord(70, 0, 4, 7))!, 0, 'minor')).toBe('♭VII');
+  });
+
+  it('keeps the accidental in front of the quality marks', () => {
+    expect(romanNumeral(detectChord(chord(66, 0, 3, 6))!, 0, 'major')).toBe('♯iv°');
+    expect(romanNumeral(detectChord(chord(70, 0, 4, 7, 10))!, 0, 'major')).toBe('♭VII7');
   });
 });

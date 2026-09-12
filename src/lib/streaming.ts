@@ -17,6 +17,8 @@ export type Platform = {
   server: string;
   /** Where the user finds their stream key. */
   keyHint: string;
+  /** Page where the key is actually issued, opened in the browser. */
+  keyUrl?: string;
   /** Formats this platform expects. Advisory, not enforced. */
   prefers: 'landscape' | 'portrait' | 'either';
   /**
@@ -32,6 +34,7 @@ export const PLATFORMS: Record<PlatformId, Platform> = {
     name: 'YouTube Live',
     server: 'rtmp://a.rtmp.youtube.com/live2',
     keyHint: 'YouTube Studio → Go Live → Stream key',
+    keyUrl: 'https://studio.youtube.com/channel/UC/livestreaming',
     prefers: 'landscape',
   },
   tiktok: {
@@ -39,6 +42,7 @@ export const PLATFORMS: Record<PlatformId, Platform> = {
     name: 'TikTok Live',
     server: 'rtmp://push.tiktokcdn.com/live',
     keyHint: 'TikTok LIVE Studio → Stream key',
+    keyUrl: 'https://livecenter.tiktok.com/live_monitor',
     prefers: 'portrait',
     caveat: 'TikTok only issues stream keys to accounts with LIVE access, which '
       + 'is granted at a follower threshold. Without it there is no key to enter.',
@@ -178,4 +182,25 @@ export function normalizeDestinations(raw: unknown): Destination[] {
       enabled: item.enabled !== false,
     }];
   });
+}
+
+/**
+ * Destinations kept between sessions, so a key is pasted once and reused.
+ *
+ * Stored under its own key rather than with the settings, which are exported
+ * with a project: a stream key must not travel in a shared project file.
+ */
+export function loadDestinations(): Destination[] {
+  try {
+    const stored = localStorage.getItem(STREAM_STORAGE_KEY);
+    return normalizeDestinations(stored ? JSON.parse(stored) : null);
+  } catch {
+    return [];
+  }
+}
+
+export function saveDestinations(destinations: Destination[]): void {
+  try {
+    localStorage.setItem(STREAM_STORAGE_KEY, JSON.stringify(destinations));
+  } catch { /* private mode or quota */ }
 }

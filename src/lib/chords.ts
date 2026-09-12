@@ -273,6 +273,26 @@ const MAJOR_STEPS = [0, 2, 4, 5, 7, 9, 11];
 const MINOR_STEPS = [0, 2, 3, 5, 7, 8, 10];
 const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
 
+/**
+ * Every semitone above the key root, as a scale degree plus an accidental.
+ * The tritone is written as a sharp fourth rather than a flat fifth, which is
+ * the commoner reading in practice.
+ */
+const CHROMATIC_DEGREES: Array<[number, string]> = [
+  [0, ''],    // I
+  [1, '♭'],  // flat II
+  [1, ''],    // II
+  [2, '♭'],  // flat III
+  [2, ''],    // III
+  [3, ''],    // IV
+  [3, '♯'],  // sharp IV
+  [4, ''],    // V
+  [5, '♭'],  // flat VI
+  [5, ''],    // VI
+  [6, '♭'],  // flat VII
+  [6, ''],    // VII
+];
+
 export function scaleNotes(keyRoot: number, mode: Mode): number[] {
   const steps = mode === 'major' ? MAJOR_STEPS : MINOR_STEPS;
   return steps.map(step => (keyRoot + step) % 12);
@@ -284,9 +304,12 @@ export function scaleNotes(keyRoot: number, mode: Mode): number[] {
  * augmented, plus a figured-bass inversion suffix.
  */
 export function romanNumeral(chord: ChordResult, keyRoot: number, mode: Mode): string | null {
-  const degrees = scaleNotes(keyRoot, mode);
-  const index = degrees.indexOf(pitchClass(chord.root));
-  if (index < 0) return null;
+  // Every chromatic step has a number, so a chord from outside the key is
+  // named rather than ignored: the flat second, the sharp fourth, the flat
+  // seventh. The major scale is the reference for both modes, which is how the
+  // number system is normally written — a minor key reads i, ♭III, ♭VI, ♭VII.
+  const semitones = (pitchClass(chord.root) - pitchClass(keyRoot) + 12) % 12;
+  const [index, accidental] = CHROMATIC_DEGREES[semitones];
 
   // Classify by interval content, not by name: a minor third makes the numeral
   // lowercase, whatever the template happens to be called.
@@ -296,7 +319,7 @@ export function romanNumeral(chord: ChordResult, keyRoot: number, mode: Mode): s
   const isHalfDim = isDiminished && has(10);
   const isAugmented = has(4) && has(8) && !has(7);
 
-  let numeral = isMinorThird ? ROMAN[index].toLowerCase() : ROMAN[index];
+  let numeral = accidental + (isMinorThird ? ROMAN[index].toLowerCase() : ROMAN[index]);
 
   if (isHalfDim) numeral += 'ø';
   else if (isDiminished) numeral += '°';

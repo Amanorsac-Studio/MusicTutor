@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('pianoTutorDesktop', {
   loadSettings: () => ipcRenderer.invoke('settings:load'),
   saveSettings: (value) => ipcRenderer.invoke('settings:save', value),
   paths: () => ipcRenderer.invoke('library:paths'),
+  openExternal: (url) => ipcRenderer.invoke('external:open', url),
   streamAvailable: () => ipcRenderer.invoke('stream:available'),
   streamStart: (targets, options) => ipcRenderer.invoke('stream:start', targets, options),
   streamStop: () => ipcRenderer.invoke('stream:stop'),

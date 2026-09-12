@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  ArrowDown, ArrowUp, Camera, ChevronsDown, ChevronsUp, Circle, Copy, Eye, EyeOff,
+  ArrowDown, ArrowUp, AudioLines, Camera, ChevronsDown, ChevronsUp, Circle, Copy, Eye, EyeOff,
   Image as ImageIcon, Keyboard, Lock, Maximize, Mic2, Move, Music2, Piano, Plus,
-  RotateCcw, Square, Trash2, Type, Unlock, Video, Volume2,
+  Radio, RotateCcw, Square, Trash2, Type, Unlock, Video, Volume2,
 } from 'lucide-react';
 import { SceneCanvas } from '../components/SceneCanvas';
 import { TrackPanel } from '../components/TrackPanel';
@@ -13,13 +13,17 @@ import { detectChord, romanNumeral } from '../lib/chords';
 import { formatDuration } from '../lib/settings';
 import {
   cameraRoleRect, centreRect, countSources, createCameraSource, fillCanvas, fitToCanvas,
-  layoutFor, reorder, type CameraRole, type ChordDisplayMode, type Source, type SourceKind,
+  layoutFor, naturalKeyboardHeight, reorder,
+  type CameraRole, type ChordDisplayMode, type Source, type SourceKind,
 } from '../lib/scene';
 import { FORMAT_IDS, OUTPUT_FORMATS, getFormat, type OutputFormatId } from '../lib/formats';
 import { KEY_NAMES, scaleNotes, type Mode } from '../lib/chords';
 import { BACKDROPS } from '../lib/backdrops';
 import { midiManager } from '../lib/midi';
 import { cameraHub } from '../lib/cameraHub';
+import { liveStreamer } from '../lib/liveStream';
+import { loadDestinations, validateAll, EMPTY_STATUS, type StreamStatus } from '../lib/streaming';
+import { type QualityLevel } from '../lib/formats';
 
 type MenuEntry = { key: string; label: string; Icon: typeof Camera; kind: SourceKind; role?: CameraRole };
 
@@ -30,11 +34,12 @@ const SOURCE_KINDS: MenuEntry[] = [
   { key: 'keyboard', label: 'Piano keyboard', kind: 'keyboard', Icon: Piano },
   { key: 'text', label: 'Text', kind: 'text', Icon: Type },
   { key: 'chord', label: 'Chord readout', kind: 'chord', Icon: Music2 },
+  { key: 'staff', label: 'Notation staff', kind: 'staff', Icon: AudioLines },
   { key: 'image', label: 'Image', kind: 'image', Icon: ImageIcon },
   { key: 'color', label: 'Colour block', kind: 'color', Icon: Square },
 ];
 
-export function Studio() {
+export function Studio({ onOpenStream }: { onOpenStream?: () => void } = {}) {
   const {
     settings, updateSettings, catalog, activeNotes, noteOn, noteOff, panic, levels,
     channels, attachInput, detachInput,
@@ -42,10 +47,9 @@ export function Studio() {
     scenes, activeScene, activeSceneId, sources, selectScene, addScene, duplicateScene,
     renameScene, deleteScene, reorderScene, setSceneSources, addSource, updateSource, removeSource,
     selectedSourceId, setSelectedSourceId,
-    format, setFormat, canvasSize, seedLayoutFrom,
+    format, setFormat, canvasSize, seedLayoutFrom, setNotice,
   } = useStudio();
 
-  const [midiInputId, setMidiInputId] = useState('');
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [viewZoom, setViewZoom] = useState(1);
 
@@ -131,11 +135,8 @@ export function Studio() {
             <span>MIDI input
               <Select
                 label="MIDI input"
-                value={midiInputId}
-                onChange={value => {
-                  setMidiInputId(value);
-                  midiManager.setEnabledInputs(value ? [value] : undefined);
-                }}
+                value={settings.midiInputId}
+                onChange={value => updateSettings({ midiInputId: value })}
                 options={[
                   { value: '', label: midiStatusLabel },
                   ...catalog.midiInputs.map(port => ({ value: port.id, label: port.name })),
@@ -364,6 +365,12 @@ export function Studio() {
           </div>
           <div className="transport-controls">
             <button title="All notes off" aria-label="All notes off" onClick={panic}><RotateCcw size={17} /></button>
+            <GoLiveButton
+              frameRate={settings.frameRate}
+              quality={settings.videoQuality as QualityLevel}
+              onNotice={setNotice}
+              onOpenStream={onOpenStream}
+            />
             <button
               className={`record ${recording ? 'active' : ''}`}
               onClick={() => (recording
@@ -610,7 +617,11 @@ function SourceInspector({
               value={`${source.props.firstNote ?? 21}-${source.props.lastNote ?? 108}`}
               onChange={value => {
                 const [first, last] = value.split('-').map(Number);
-                onChange({ props: { firstNote: first, lastNote: last } });
+                // Fewer keys means wider keys, so the height follows the range.
+                onChange({
+                  props: { firstNote: first, lastNote: last },
+                  height: naturalKeyboardHeight(source.width, first, last, source.props.namePlayed !== false),
+                });
               }}
               options={[
                 { value: '21-108', label: '88 keys · A0 – C8' },
@@ -652,6 +663,70 @@ function SourceInspector({
             />
             Name the notes being played
           </label>
+          <div className="inspector-buttons">
+            <button
+              onClick={() => onChange({
+                height: naturalKeyboardHeight(
+                  source.width,
+                  source.props.firstNote ?? 21,
+                  source.props.lastNote ?? 108,
+                  source.props.namePlayed !== false,
+                ),
+              })}
+            >Natural key shape</button>
+          </div>
+          <small className="field-hint">
+            Sets the height so the keys keep a real instrument's proportions, which is
+            what stops a long keyboard looking like a row of slivers.
+          </small>
+        </>
+      )}
+
+      {source.kind === 'staff' && (
+        <>
+          <label className="section-label">Notation staff</label>
+          <label className="inspector-field wide">
+            <span>Notehead colour</span>
+            <input
+              type="color"
+              aria-label="Notehead colour"
+              value={source.props.accent ?? '#ffa629'}
+              onChange={event => prop('accent', event.target.value)}
+            />
+          </label>
+          <label className="inspector-field wide">
+            <span>Staff colour</span>
+            <input
+              type="color"
+              aria-label="Staff colour"
+              value={source.props.color ?? '#0d1420'}
+              onChange={event => prop('color', event.target.value)}
+            />
+          </label>
+          <div className="inspector-field wide">
+            <span>Paper</span>
+            <Select
+              label="Staff paper"
+              value={source.props.background === 'transparent' ? 'transparent' : 'paper'}
+              onChange={value => prop('background', value === 'transparent' ? 'transparent' : 'rgba(255,255,255,0.94)')}
+              options={[
+                { value: 'paper', label: 'White paper' },
+                { value: 'transparent', label: 'Transparent' },
+              ]}
+            />
+          </div>
+          <label className="inspector-check">
+            <input
+              type="checkbox"
+              checked={source.props.namePlayed !== false}
+              onChange={event => prop('namePlayed', event.target.checked)}
+            />
+            Name the notes being played
+          </label>
+          <small className="field-hint">
+            Shows what is sounding right now on a grand staff. Sharps or flats follow
+            the accidental setting, so the spelling matches the key you are teaching in.
+          </small>
         </>
       )}
 
@@ -774,3 +849,62 @@ function SourceInspector({
   );
 }
 
+
+/* ------------------------------------------------------------------ *
+ * Go live
+ * ------------------------------------------------------------------ */
+
+/**
+ * Start and stop the stream without leaving the Tutorial page, since going
+ * live and starting a recording are the same moment in a lesson.
+ *
+ * Destinations and keys are set up on the Stream page; with none ready this
+ * button takes you there rather than failing silently.
+ */
+function GoLiveButton({
+  frameRate, quality, onNotice, onOpenStream,
+}: {
+  frameRate: number;
+  quality: QualityLevel;
+  onNotice: (message: string) => void;
+  onOpenStream?: () => void;
+}) {
+  const [status, setStatus] = useState<StreamStatus>(EMPTY_STATUS);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => liveStreamer.subscribe(setStatus), []);
+
+  const live = status.state === 'live' || status.state === 'starting';
+
+  const toggle = async () => {
+    if (live) {
+      setBusy(true);
+      await liveStreamer.stop();
+      setBusy(false);
+      return;
+    }
+    const destinations = loadDestinations().filter(destination => destination.enabled);
+    if (!destinations.length || validateAll(destinations).length) {
+      onNotice('Set up a destination and stream key on the Stream page first.');
+      onOpenStream?.();
+      return;
+    }
+    setBusy(true);
+    const failure = await liveStreamer.start(destinations, { frameRate, level: quality });
+    setBusy(false);
+    if (failure) onNotice(failure);
+  };
+
+  return (
+    <button
+      className={`go-live ${live ? 'active' : ''}`}
+      onClick={() => void toggle()}
+      disabled={busy}
+      title={live ? 'Stop streaming' : 'Go live'}
+      aria-label={live ? 'Stop streaming' : 'Go live'}
+    >
+      {live ? <Square size={15} fill="currentColor" /> : <Radio size={17} />}
+      <small>{busy ? '…' : live ? 'LIVE' : 'GO LIVE'}</small>
+    </button>
+  );
+}

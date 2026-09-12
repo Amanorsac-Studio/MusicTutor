@@ -124,7 +124,7 @@ function Shell() {
         </div>
       </header>
 
-      {workspace === 'Studio' && <Studio />}
+      {workspace === 'Studio' && <Studio onOpenStream={() => setWorkspace('Stream')} />}
       {workspace === 'Devices' && <Devices />}
       {workspace === 'Mixer' && <Mixer />}
       {workspace === 'Stream' && <StreamPage />}

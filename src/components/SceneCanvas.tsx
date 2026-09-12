@@ -17,6 +17,7 @@ import { PianoKeyboard } from './PianoKeyboard';
 import { cameraHub } from '../lib/cameraHub';
 import { findBackdrop } from '../lib/backdrops';
 import type { Accidental } from '../lib/chords';
+import { drawStaff } from '../lib/drawScene';
 
 const HANDLES: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
 
@@ -413,9 +414,61 @@ function SourceBody({
         />
       );
 
+    case 'staff':
+      return (
+        <StaffView
+          active={activeNotes}
+          accidental={accidental}
+          accent={props.accent ?? '#ffa629'}
+          ink={props.color ?? '#0d1420'}
+          paper={props.background ?? 'rgba(255,255,255,0.94)'}
+          nameNotes={props.namePlayed !== false}
+        />
+      );
+
     default:
       return null;
   }
+}
+
+/**
+ * The staff preview, drawn with the same renderer the recording uses so the
+ * editor cannot drift from the output.
+ *
+ * The backing canvas is a fixed size and stretched by CSS: the staff scales
+ * cleanly, and it saves watching the element for size changes.
+ */
+function StaffView({
+  active, accidental, accent, ink, paper, nameNotes,
+}: {
+  active: Set<number>;
+  accidental: Accidental;
+  accent: string;
+  ink: string;
+  paper: string;
+  nameNotes: boolean;
+}) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  // A key that changes whenever the sounding notes do, so the effect reruns
+  // without depending on a Set's identity.
+  const notes = [...active].sort((a, b) => a - b).join(',');
+
+  useEffect(() => {
+    const canvas = ref.current;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawStaff(ctx, { width: canvas.width, height: canvas.height }, {
+      active: new Set(notes ? notes.split(',').map(Number) : []),
+      accidental,
+      accent,
+      ink,
+      paper,
+      nameNotes,
+    });
+  }, [notes, accidental, accent, ink, paper, nameNotes]);
+
+  return <canvas className="source-staff" ref={ref} width={760} height={400} />;
 }
 
 /** Shows a camera from the shared hub, keeping one stream per device. */

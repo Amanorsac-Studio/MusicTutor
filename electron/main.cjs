@@ -141,6 +141,14 @@ app.whenReady().then(() => {
 
   ipcMain.handle('library:paths', async () => ({ projects: projectsFolder(), recordings: recordingsFolder() }));
 
+  // Only ever hand https links to the system browser.
+  ipcMain.handle('external:open', async (_event, url) => {
+    const target = String(url || '');
+    if (!/^https:\/\//i.test(target)) throw new Error('Only https links can be opened');
+    await shell.openExternal(target);
+    return target;
+  });
+
   /* ----------------------------------------------------------- streaming */
 
   streamer.onStatus = status => {

@@ -111,6 +111,29 @@ export class AudioEngine {
    * Lifecycle
    * ---------------------------------------------------------------- */
 
+  /**
+   * Round-trip latency of the output path, in milliseconds.
+   *
+   * baseLatency is the graph's own buffering and outputLatency is what the
+   * operating system and the device add after that. Together they are the delay
+   * between a note being scheduled and the speaker moving. Input latency is
+   * reported per channel, since it depends on the interface.
+   */
+  get outputLatencyMs(): number {
+    const ctx = this.ctx;
+    if (!ctx) return 0;
+    const base = ctx.baseLatency ?? 0;
+    const output = (ctx as AudioContext & { outputLatency?: number }).outputLatency ?? 0;
+    return Math.round((base + output) * 10000) / 10;
+  }
+
+  /** Capture latency reported by an attached input, in milliseconds. */
+  inputLatencyMs(channelId: string): number {
+    const track = this.channels.get(channelId)?.stream?.getAudioTracks()[0];
+    const latency = track?.getSettings?.().latency;
+    return typeof latency === 'number' ? Math.round(latency * 10000) / 10 : 0;
+  }
+
   /** Create the graph on first use. Safe to call repeatedly. */
   ensure(): AudioContext {
     if (this.ctx) {
@@ -265,6 +288,10 @@ export class AudioEngine {
           channelCount: { ideal: 2 },
           sampleRate: { ideal: 48000 },
           sampleSize: { ideal: 24 },
+          // Ask the driver for the smallest capture buffer it will give. Chrome
+          // treats this as a hint, so it may be ignored; where it is honoured it
+          // is worth several milliseconds of round trip.
+          latency: { ideal: 0 },
         },
         video: false,
       });

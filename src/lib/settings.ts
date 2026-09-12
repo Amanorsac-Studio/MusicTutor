@@ -36,6 +36,8 @@ export type AppSettings = {
   duckingAmountDb: number;
   midiEcho: boolean;
   outputDeviceId: string;
+  /** Which MIDI port to listen to; empty means every connected port. */
+  midiInputId: string;
   /** Which physical camera fills each teaching role. */
   faceCameraId: string;
   handCameraId: string;
@@ -68,6 +70,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   duckingAmountDb: -6,
   midiEcho: false,
   outputDeviceId: '',
+  midiInputId: '',
   faceCameraId: '',
   handCameraId: '',
   locale: typeof navigator !== 'undefined' ? navigator.language : 'en-US',

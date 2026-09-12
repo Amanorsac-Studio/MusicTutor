@@ -11,6 +11,10 @@ import type { CanvasSize } from './formats';
 import { isBlackKey, noteName, octaveOf, pitchClass, type Accidental } from './chords';
 import { cameraHub } from './cameraHub';
 import { findBackdrop, paintBackdrop } from './backdrops';
+import {
+  ledgerSteps, noteOffsets, placeNote, staffGeometry, staffLines, stepY,
+  type Clef, type StaffGeometry,
+} from './staff';
 
 export type RenderContext = {
   /** Notes currently sounding, for the keyboard and chord readout. */
@@ -138,7 +142,7 @@ export function drawKeyboard(
   if (!whites.length) return;
 
   // A callout strip above the keys, when note names are being shown.
-  const calloutHeight = namePlayed ? box.height * 0.16 : 0;
+  const calloutHeight = namePlayed ? box.height * 0.2 : 0;
   const feltHeight = Math.max(3, box.height * 0.045);
   const keyTop = calloutHeight + feltHeight;
   const keyHeight = box.height - keyTop;
@@ -220,17 +224,26 @@ export function drawKeyboard(
     return (whiteIndex + 1 + (nudge[pitchClass(note)] ?? 0)) * whiteWidth;
   };
 
-  const fontSize = Math.min(calloutHeight * 0.78, box.width * 0.05);
+  // Always white. The highlight colour is the teacher's choice and can be any
+  // hue, which left the names unreadable against a light one; white with a
+  // shadow reads over every background.
+  const fontSize = Math.min(calloutHeight * 0.92, box.width * 0.075);
   ctx.font = `700 ${fontSize}px Inter, system-ui, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
+  ctx.shadowColor = 'rgba(0,0,0,0.85)';
+  ctx.shadowBlur = fontSize * 0.35;
+  ctx.shadowOffsetY = fontSize * 0.06;
 
   [...active].sort((a, b) => a - b).forEach(note => {
     const centre = centreOf(note);
     if (centre === null) return;
-    ctx.fillStyle = accent;
+    ctx.fillStyle = '#ffffff';
     ctx.fillText(noteName(note, accidental), centre, calloutHeight * 0.5);
   });
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
 }
 
 /* ------------------------------------------------------------------ *
@@ -380,8 +393,149 @@ function drawSource(ctx: CanvasRenderingContext2D, source: Source, context: Rend
       break;
     }
 
+    case 'staff': {
+      drawStaff(ctx, { width, height }, {
+        active: context.activeNotes,
+        accidental: context.accidental,
+        accent: props.accent ?? '#ffa629',
+        ink: props.color ?? '#0d1420',
+        paper: props.background ?? '#ffffff',
+        nameNotes: props.namePlayed !== false,
+      });
+      break;
+    }
+
     default:
       break;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Staff
+ * ------------------------------------------------------------------ */
+
+export type StaffOptions = {
+  active: Set<number>;
+  accidental: 'sharp' | 'flat';
+  /** Colour of sounding noteheads. */
+  accent: string;
+  /** Colour of the staff lines and clefs. */
+  ink: string;
+  /** Background fill; 'transparent' leaves whatever is underneath. */
+  paper: string;
+  nameNotes: boolean;
+};
+
+/** The five lines of one staff, plus its clef. */
+function drawOneStaff(
+  ctx: CanvasRenderingContext2D,
+  clef: Clef,
+  geometry: StaffGeometry,
+  ink: string,
+): void {
+  const lines = staffLines(clef);
+  ctx.strokeStyle = ink;
+  ctx.lineWidth = Math.max(1, geometry.space * 0.07);
+  lines.forEach(step => {
+    const y = stepY(step, geometry);
+    ctx.beginPath();
+    ctx.moveTo(geometry.noteLeft * 0.12, y);
+    ctx.lineTo(geometry.right, y);
+    ctx.stroke();
+  });
+
+  // A word rather than a music glyph. The Unicode clefs render as empty boxes
+  // on machines without a music font, and a wrong-looking clef is worse than a
+  // plain label on a live readout.
+  ctx.fillStyle = ink;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.font = `700 ${geometry.space * 0.95}px Inter, system-ui, sans-serif`;
+  const anchor = clef === 'treble' ? lines[2] : lines[2];
+  ctx.fillText(clef === 'treble' ? 'TREBLE' : 'BASS', geometry.noteLeft * 0.2, stepY(anchor, geometry));
+}
+
+/**
+ * Draw the notes currently sounding on a grand staff.
+ *
+ * This is a live readout, not notation: there are no rhythms or bar lines,
+ * because what is held down at this instant is what a learner needs to see.
+ */
+export function drawStaff(
+  ctx: CanvasRenderingContext2D,
+  box: { width: number; height: number },
+  options: StaffOptions,
+): void {
+  const { width, height } = box;
+  if (width <= 0 || height <= 0) return;
+
+  if (options.paper && options.paper !== 'transparent') {
+    ctx.fillStyle = options.paper;
+    ctx.fillRect(0, 0, width, height);
+  }
+
+  const geometry = staffGeometry(width, height);
+  drawOneStaff(ctx, 'treble', geometry, options.ink);
+  drawOneStaff(ctx, 'bass', geometry, options.ink);
+
+  // The brace and the barline joining the two staves.
+  ctx.strokeStyle = options.ink;
+  ctx.lineWidth = Math.max(1, geometry.space * 0.16);
+  ctx.beginPath();
+  ctx.moveTo(geometry.noteLeft * 0.12, stepY(38, geometry));
+  ctx.lineTo(geometry.noteLeft * 0.12, stepY(18, geometry));
+  ctx.stroke();
+
+  const notes = [...options.active].sort((a, b) => a - b);
+  if (!notes.length) return;
+
+  const placements = notes.map(note => placeNote(note, options.accidental));
+  const offsets = noteOffsets(placements);
+  const headRadius = geometry.space * 0.52;
+  // Chords are stacked at one horizontal position, a third of the way in, so
+  // the eye always looks at the same place.
+  const originX = geometry.noteLeft + (geometry.right - geometry.noteLeft) * 0.34;
+
+  placements.forEach((placement, index) => {
+    const y = stepY(placement.step, geometry);
+    const x = originX + offsets[index] * headRadius * 2.1;
+
+    ctx.strokeStyle = options.ink;
+    ctx.lineWidth = Math.max(1, geometry.space * 0.08);
+    ledgerSteps(placement.step).forEach(step => {
+      const lineY = stepY(step, geometry);
+      ctx.beginPath();
+      ctx.moveTo(x - headRadius * 1.8, lineY);
+      ctx.lineTo(x + headRadius * 1.8, lineY);
+      ctx.stroke();
+    });
+
+    // A slightly oval head, tilted, the way a notehead is actually shaped.
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(-0.34);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, headRadius * 1.22, headRadius * 0.92, 0, 0, Math.PI * 2);
+    ctx.fillStyle = options.accent;
+    ctx.fill();
+    ctx.restore();
+
+    if (placement.accidental) {
+      ctx.fillStyle = options.ink;
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      ctx.font = `700 ${geometry.space * 1.5}px Georgia, 'Times New Roman', serif`;
+      ctx.fillText(placement.accidental, x - headRadius * 1.9, y);
+    }
+  });
+
+  if (options.nameNotes) {
+    const names = placements.map(placement => placement.letter + placement.accidental);
+    ctx.fillStyle = options.accent;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'top';
+    ctx.font = `700 ${geometry.space * 1.2}px Inter, system-ui, sans-serif`;
+    ctx.fillText(names.join(' '), width - geometry.space * 0.5, geometry.space * 0.4);
   }
 }
 

@@ -21,7 +21,7 @@ export const CANVAS_HEIGHT = 1080;
 
 export const LANDSCAPE_CANVAS: CanvasSize = { width: CANVAS_WIDTH, height: CANVAS_HEIGHT };
 
-export type SourceKind = 'camera' | 'keyboard' | 'text' | 'image' | 'color' | 'chord' | 'backdrop';
+export type SourceKind = 'camera' | 'keyboard' | 'staff' | 'text' | 'image' | 'color' | 'chord' | 'backdrop';
 
 /**
  * Cameras are assigned a teaching role rather than a bare device. A face
@@ -145,15 +145,34 @@ function sourceDefaults(kind: SourceKind, canvas: CanvasSize): { name: string; r
       };
     case 'backdrop':
       return { name: 'Backdrop', rect: { x: 0, y: 0, width: cw, height: ch }, props: { backdrop: 'studio', radius: 0 } };
-    case 'keyboard':
+    case 'keyboard': {
+      const width = cw - margin * 2;
+      // Proportioned rather than a fixed fraction of the canvas, so a portrait
+      // layout gets a keyboard that looks like an instrument instead of a
+      // stretched band of slivers.
+      const height = Math.min(Math.round(ch * 0.4), naturalKeyboardHeight(width));
       return {
         name: 'Virtual keyboard',
-        rect: {
-          x: margin, y: Math.round(ch - margin - ch * 0.24),
-          width: cw - margin * 2, height: Math.round(ch * 0.24),
-        },
+        rect: { x: margin, y: ch - margin - height, width, height },
         props: { firstNote: 21, lastNote: 108, accent: '#ffa629', showLabels: 'c-only', namePlayed: true, radius: 12 },
       };
+    }
+    case 'staff': {
+      // A grand staff needs room for both staves plus ledger lines, so it is
+      // sized by height first and given a readable width from that.
+      const height = Math.round(Math.min(ch * 0.34, cw * 0.3));
+      return {
+        name: 'Notation staff',
+        rect: {
+          x: margin, y: Math.round(ch * 0.1),
+          width: Math.round(Math.min(cw - margin * 2, height * 1.9)), height,
+        },
+        props: {
+          accent: '#ffa629', color: '#0d1420', background: 'rgba(255,255,255,0.94)',
+          namePlayed: true, radius: 14,
+        },
+      };
+    }
     case 'text':
       return {
         name: 'Text',
@@ -204,6 +223,41 @@ export function createSource(
     // Overridden props are merged over the preset rather than replacing it.
     props: { ...preset.props, ...(overriddenProps ?? {}) },
   };
+}
+
+/**
+ * A real white key is roughly 23mm wide and 150mm long, about 1:6.5. Holding
+ * that ratio is what makes a keyboard read as an instrument seen from a
+ * distance rather than a row of slivers — which is what an 88-key board becomes
+ * when it is stretched to the height of a portrait canvas.
+ */
+export const WHITE_KEY_RATIO = 6.5;
+
+/** Count the white keys in a range. */
+export function whiteKeyCount(firstNote: number, lastNote: number): number {
+  let count = 0;
+  for (let note = firstNote; note <= lastNote; note++) {
+    if (![1, 3, 6, 8, 10].includes(((note % 12) + 12) % 12)) count++;
+  }
+  return Math.max(1, count);
+}
+
+/**
+ * The height at which a keyboard of this width and range looks like a real
+ * instrument. Callouts above the keys need their own room, so the strip is
+ * included when they are shown.
+ */
+export function naturalKeyboardHeight(
+  width: number,
+  firstNote = 21,
+  lastNote = 108,
+  withCallouts = true,
+): number {
+  const keyWidth = width / whiteKeyCount(firstNote, lastNote);
+  const keys = keyWidth * WHITE_KEY_RATIO;
+  // drawKeyboard reserves a fifth of the box for the callout strip and a
+  // twentieth for the felt, so the keys themselves get about three quarters.
+  return Math.round(withCallouts ? keys / 0.755 : keys / 0.955);
 }
 
 /**
@@ -480,7 +534,7 @@ export function rescaleLayout(sources: Source[], from: CanvasSize, to: CanvasSiz
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
 
-const VALID_KINDS: SourceKind[] = ['camera', 'keyboard', 'text', 'image', 'color', 'chord', 'backdrop'];
+const VALID_KINDS: SourceKind[] = ['camera', 'keyboard', 'staff', 'text', 'image', 'color', 'chord', 'backdrop'];
 
 function normalizeSource(item: unknown): Source | null {
   if (!item || typeof item !== 'object') return null;

@@ -43,6 +43,8 @@ export type DesktopBridge = {
 
   /* Live streaming. Chromium cannot speak RTMP, so a bundled ffmpeg in the
      main process does the transcoding and delivery. */
+  /** Open an https link in the system browser. */
+  openExternal?: (url: string) => Promise<string>;
   streamAvailable?: () => Promise<boolean>;
   streamStart?: (
     targets: Array<{ id: string; name: string; url: string }>,

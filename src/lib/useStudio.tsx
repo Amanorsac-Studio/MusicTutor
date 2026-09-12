@@ -340,6 +340,24 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     setSelectedSourceId(previous => (previous === id ? null : previous));
   }, []);
 
+  /*
+   * Build the audio graph on the first click or key press.
+   *
+   * A browser will not start an AudioContext without a gesture, and building it
+   * lazily on the first note costs tens of milliseconds exactly when timing
+   * matters. Doing it on any early gesture means the first note is as prompt as
+   * the hundredth.
+   */
+  useEffect(() => {
+    const warm = () => { void audioEngine.resume(); };
+    window.addEventListener('pointerdown', warm, { once: true });
+    window.addEventListener('keydown', warm, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', warm);
+      window.removeEventListener('keydown', warm);
+    };
+  }, []);
+
   // Feed the compositor from refs rather than state, so it always paints the
   // current scene without the provider being rebuilt on every edit.
   const activeNotesRef = useRef(activeNotes);
@@ -398,9 +416,12 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     audioEngine.setLimiterEnabled(settings.limiter);
     audioEngine.setDucking({ enabled: settings.ducking, amountDb: settings.duckingAmountDb });
     midiManager.setEcho(settings.midiEcho);
+    // A single port, or every port when nothing is chosen.
+    midiManager.setEnabledInputs(settings.midiInputId ? [settings.midiInputId] : undefined);
   }, [
     settingsLoaded, settings.concertPitch, settings.masterLevel, settings.monitorLevel,
     settings.limiter, settings.ducking, settings.duckingAmountDb, settings.midiEcho,
+    settings.midiInputId,
   ]);
 
   // Autosave preference changes, debounced so a dragged slider does not thrash disk.

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CANVAS_HEIGHT, CANVAS_WIDTH, LANDSCAPE_CANVAS, MIN_SIZE, clampToCanvas, centreRect,
   countSources, createScene, createSource, fitToCanvas, hitTest, layoutFor, normalizeScenes,
-  rescaleLayout, reorder, resizeRect, snapRect, withLayout,
+  naturalKeyboardHeight, rescaleLayout, reorder, resizeRect, snapRect, whiteKeyCount, withLayout,
   type Rect, type Source,
 } from './scene';
 
@@ -336,5 +336,47 @@ describe('rescaleLayout', () => {
     const tiny = createSource('text', landscape, { width: MIN_SIZE, height: MIN_SIZE });
     const [scaled] = rescaleLayout([tiny], landscape, { width: 100, height: 100 });
     expect(scaled.width).toBeGreaterThanOrEqual(MIN_SIZE);
+  });
+});
+
+describe('keyboard proportions', () => {
+  it('counts the white keys of a full piano', () => {
+    expect(whiteKeyCount(21, 108)).toBe(52);
+    expect(whiteKeyCount(60, 72)).toBe(8); // C4 to C5 inclusive
+  });
+
+  it('keeps a real key shape whatever the canvas', () => {
+    // A stretched keyboard reads as slivers; holding the ratio makes it look
+    // like an instrument seen from further away.
+    for (const canvas of [{ width: 1920, height: 1080 }, { width: 1080, height: 1920 }]) {
+      const keyboard = createSource('keyboard', canvas);
+      const keyWidth = keyboard.width / whiteKeyCount(21, 108);
+      const keyHeight = keyboard.height * 0.755;
+      expect(keyHeight / keyWidth).toBeCloseTo(6.5, 0);
+    }
+  });
+
+  it('gives portrait a shorter keyboard than landscape, not a taller one', () => {
+    const landscape = createSource('keyboard', { width: 1920, height: 1080 });
+    const portrait = createSource('keyboard', { width: 1080, height: 1920 });
+    // Portrait is narrower, so its keys are narrower, so the board is shorter.
+    expect(portrait.height).toBeLessThan(landscape.height);
+  });
+
+  it('makes a shorter range taller, because its keys are wider', () => {
+    const full = naturalKeyboardHeight(1000, 21, 108);
+    const twoOctaves = naturalKeyboardHeight(1000, 48, 72);
+    expect(twoOctaves).toBeGreaterThan(full);
+  });
+
+  it('leaves room for the callouts only when they are shown', () => {
+    expect(naturalKeyboardHeight(1000, 21, 108, true))
+      .toBeGreaterThan(naturalKeyboardHeight(1000, 21, 108, false));
+  });
+
+  it('keeps the keyboard inside the canvas', () => {
+    const canvas = { width: 1080, height: 1920 };
+    const keyboard = createSource('keyboard', canvas);
+    expect(keyboard.y + keyboard.height).toBeLessThanOrEqual(canvas.height);
   });
 });

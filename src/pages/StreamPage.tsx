@@ -1,34 +1,21 @@
 import { useEffect, useState } from 'react';
 import {
-  AlertTriangle, Eye, EyeOff, Plus, Radio, Square, Trash2, Wifi,
+  AlertTriangle, ExternalLink, Eye, EyeOff, Plus, Radio, Square, Trash2, Wifi,
 } from 'lucide-react';
+import { openExternal } from '../lib/openExternal';
+import { LiveChatPanel } from '../components/LiveChatPanel';
 import { Select } from '../components/Select';
 import { Toggle } from '../components/common';
 import { useStudio } from '../lib/useStudio';
 import { liveStreamer } from '../lib/liveStream';
 import {
   PLATFORMS, PLATFORM_IDS, createDestination, formatWarning, maskedUrl,
-  normalizeDestinations, validateAll, STREAM_STORAGE_KEY,
+  validateAll, loadDestinations, saveDestinations,
   type Destination, type PlatformId, type StreamStatus, EMPTY_STATUS,
 } from '../lib/streaming';
 import { getFormat, type QualityLevel } from '../lib/formats';
 import { formatDuration } from '../lib/settings';
 
-/** Stream keys are secrets, so they live apart from the scene data. */
-function loadDestinations(): Destination[] {
-  try {
-    const stored = localStorage.getItem(STREAM_STORAGE_KEY);
-    return normalizeDestinations(stored ? JSON.parse(stored) : null);
-  } catch {
-    return [];
-  }
-}
-
-function saveDestinations(destinations: Destination[]): void {
-  try {
-    localStorage.setItem(STREAM_STORAGE_KEY, JSON.stringify(destinations));
-  } catch { /* private mode or quota */ }
-}
 
 export function StreamPage() {
   const { settings, format, setNotice } = useStudio();
@@ -220,7 +207,15 @@ export function StreamPage() {
                   </label>
                 </div>
 
-                <small className="field-hint">{platform.keyHint} · sends to {maskedUrl(destination)}</small>
+                <small className="field-hint">
+                  {platform.keyHint} · sends to {maskedUrl(destination)}
+                  {platform.keyUrl && (
+                    <button
+                      className="link-btn"
+                      onClick={() => void openExternal(platform.keyUrl as string)}
+                    ><ExternalLink size={12} />Open the page</button>
+                  )}
+                </small>
                 {platform.caveat && (
                   <div className="destination-caveat"><AlertTriangle size={13} />{platform.caveat}</div>
                 )}
@@ -241,6 +236,8 @@ export function StreamPage() {
             ))}
           </div>
         </section>
+
+        <LiveChatPanel />
       </div>
     </div>
   );

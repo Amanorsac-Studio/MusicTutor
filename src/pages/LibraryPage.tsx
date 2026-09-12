@@ -88,6 +88,38 @@ export function LibraryPage() {
         </div>
       </div>
 
+      <section className="library-explainer">
+        <div>
+          <FolderOpen />
+          <b>Projects — how a lesson is set up</b>
+          <p>
+            Your scenes, the position of every camera and keyboard in each of them, the
+            layouts for landscape, portrait and square, your key, tempo and colours.
+            No video. Save one when you have a look you want again next week, then load
+            it and everything is where you left it. Teachers usually keep a few: one for
+            scales, one for a song lesson, one for a vertical clip.
+          </p>
+        </div>
+        <div>
+          <FileVideo />
+          <b>Recordings — what a lesson produced</b>
+          <p>
+            The video file from pressing record, and the MIDI file of what you played
+            alongside it. Open one to watch it or drag it into your editor. The MIDI can
+            be opened in any notation program to turn a lesson into sheet music.
+          </p>
+        </div>
+        <div>
+          <Library />
+          <b>Where they live</b>
+          <p>
+            Both sit in folders on this PC, under your Videos and Documents. Open folder
+            takes you there, so you can back them up, rename them or send one to someone.
+            Nothing is uploaded anywhere.
+          </p>
+        </div>
+      </section>
+
       {status && <div className="library-status">{status}</div>}
 
       {tab === 'Projects' ? (

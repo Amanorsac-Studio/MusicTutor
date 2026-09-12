@@ -387,14 +387,46 @@ kbd{min-width:84px;text-align:center;padding:6px 9px;border:1px solid #34495b;bo
 .primary.small.danger:hover{background:#c0343d}
 
 /* Note-name callouts above the keys, as in a lesson video. */
-.pk-callouts{position:relative;height:16px;margin-bottom:2px;pointer-events:none}
-.piano-keyboard.pk-fill .pk-callouts{height:9%;min-height:12px}
-.pk-callout{position:absolute;transform:translateX(-50%);bottom:0;font-size:11px;font-weight:700;
-  color:var(--pk-accent);text-shadow:0 1px 3px #000a;white-space:nowrap;line-height:1}
-.piano-keyboard.pk-fill .pk-callout{font-size:clamp(9px,1.6cqw,22px)}
+.pk-callouts{position:relative;height:20px;margin-bottom:2px;pointer-events:none}
+.piano-keyboard.pk-fill .pk-callouts{height:13%;min-height:15px}
+/* White, not the highlight colour: the accent is the teacher's choice and a
+   light one made these unreadable. A shadow keeps them legible on any key. */
+.pk-callout{position:absolute;transform:translateX(-50%);bottom:0;font-size:14px;font-weight:700;
+  color:#fff;text-shadow:0 1px 4px #000c,0 0 2px #000a;white-space:nowrap;line-height:1}
+.piano-keyboard.pk-fill .pk-callout{font-size:clamp(11px,2.4cqw,30px)}
 
 /* Bound the preview column's height. Without min-height:0 a flex item grows to
    fit its content, so a tall portrait canvas stretched the column and pushed
    the key bar and transport off the bottom instead of shrinking to fit. */
 .studio-center{min-height:0;overflow:hidden}
 .canvas-shell{flex:1 1 0;min-height:0;overflow:hidden}
+
+/* Go live, beside the record button */
+.transport-controls .go-live{width:auto;height:36px;padding:0 12px;gap:7px;border:1px solid #364b5e;background:#0a1420;color:#ff9a3d;border-radius:20px;display:flex;align-items:center}
+.transport-controls .go-live small{font-size:9px;font-weight:700;letter-spacing:.09em}
+.transport-controls .go-live:hover{background:#132436}
+.transport-controls .go-live.active{color:#fff;background:#e0452f;border-color:#ff6a4d;box-shadow:0 0 0 4px #e0452f22}
+.transport-controls .go-live:disabled{opacity:.6;cursor:default}
+
+/* Inline "open the page" links in hints */
+.link-btn{border:0;background:transparent;color:#5cbcff;font-size:inherit;display:inline-flex;align-items:center;gap:4px;margin-left:8px;padding:0;cursor:pointer}
+.link-btn:hover{text-decoration:underline}
+
+/* Library explainer */
+.library-explainer{max-width:1300px;margin:0 auto 18px;display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.library-explainer>div{border:1px solid var(--line);background:linear-gradient(140deg,#0d1b28,#09141f);border-radius:10px;padding:16px}
+.library-explainer svg{width:18px;color:#59baff;margin-bottom:9px}
+.library-explainer b{display:block;font-size:12px;margin-bottom:7px}
+.library-explainer p{margin:0;font-size:10px;line-height:1.65;color:#8fa2b3}
+@media(max-width:1000px){.library-explainer{grid-template-columns:1fr}}
+
+/* Viewer comments */
+.chat-list{max-height:280px;overflow:auto;border:1px solid #1b2f41;border-radius:8px;background:#071119;padding:10px;margin-top:12px;scrollbar-width:thin;scrollbar-color:#294258 transparent}
+.chat-line{margin:0 0 7px;font-size:11px;line-height:1.55;color:#c5d2de}
+.chat-line b{display:block;font-size:10px;color:#6fbcf5;margin-bottom:2px}
+.chat-line.owner b{color:#ffb454}
+.chat-line.moderator b{color:#7fd6a6}
+.chat-line.member b{color:#c19bff}
+
+/* Staff source in the editor */
+.source-staff{width:100%;height:100%;display:block;border-radius:inherit}
