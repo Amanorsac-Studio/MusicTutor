@@ -24,9 +24,10 @@ contextBridge.exposeInMainWorld('pianoTutorDesktop', {
   launchPlugin: (target) => ipcRenderer.invoke('plugins:launch', target),
   streamAvailable: () => ipcRenderer.invoke('stream:available'),
   streamStart: (targets, options) => ipcRenderer.invoke('stream:start', targets, options),
-  streamStop: () => ipcRenderer.invoke('stream:stop'),
-  streamStatus: () => ipcRenderer.invoke('stream:status'),
-  streamChunk: (bytes) => ipcRenderer.send('stream:chunk', bytes),
+  // `output` names which shape's encoder to act on: 'primary' or 'secondary'.
+  streamStop: (output) => ipcRenderer.invoke('stream:stop', output),
+  streamStatus: (output) => ipcRenderer.invoke('stream:status', output),
+  streamChunk: (bytes, output) => ipcRenderer.send('stream:chunk', bytes, output),
   onStreamStatus: (handler) => {
     const listener = (_event, status) => handler(status);
     ipcRenderer.on('stream:status', listener);

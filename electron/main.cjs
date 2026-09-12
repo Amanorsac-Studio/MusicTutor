@@ -7,7 +7,8 @@ const { scanPlugins, launchPlugin } = require('./plugins.cjs');
 /** The last scan, so a launch can only ever start something we found. */
 let knownPlugins = [];
 
-let streamer;
+/** One encoder per output shape, created on demand. */
+const streamers = {};
 
 let mainWindow;
 
@@ -68,7 +69,6 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  streamer = new Streamer(path.join(app.getPath('userData'), 'stream.log'));
   // Grant the capture permissions the studio needs. Everything else is denied.
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
     callback(['media', 'midi', 'midiSysex', 'audioCapture', 'videoCapture'].includes(permission));
@@ -215,16 +215,36 @@ app.whenReady().then(() => {
 
   /* ----------------------------------------------------------- streaming */
 
-  streamer.onStatus = status => {
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('stream:status', status);
+  ipcMain.handle('stream:available', async () => Boolean(ffmpegPath()));
+  /**
+   * A stream can run in two shapes at once — wide to one platform, tall to
+   * another — so each output gets its own encoder rather than sharing one.
+   */
+  const streamerFor = output => {
+    const key = output === 'secondary' ? 'secondary' : 'primary';
+    if (!streamers[key]) {
+      streamers[key] = new Streamer(path.join(app.getPath('userData'), `stream-${key}.log`));
+      streamers[key].onStatus = status => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('stream:status', { ...status, output: key });
+        }
+      };
+    }
+    return streamers[key];
   };
 
-  ipcMain.handle('stream:available', async () => Boolean(ffmpegPath()));
-  ipcMain.handle('stream:start', async (_event, targets, options) => streamer.start(targets, options));
-  ipcMain.handle('stream:stop', async () => streamer.stop());
-  ipcMain.handle('stream:status', async () => streamer.status());
+  ipcMain.handle('stream:start', async (_event, targets, options) =>
+    streamerFor(options && options.output).start(targets, options));
+  ipcMain.handle('stream:stop', async (_event, output) => {
+    if (output) return streamerFor(output).stop();
+    // No output named means stop everything.
+    return Object.values(streamers).reduce(
+      (last, item) => (item ? item.stop() : last), { ok: true },
+    );
+  });
+  ipcMain.handle('stream:status', async (_event, output) => streamerFor(output).status());
   // Chunks arrive frequently, so this is a one-way send rather than an invoke.
-  ipcMain.on('stream:chunk', (_event, bytes) => { streamer.write(bytes); });
+  ipcMain.on('stream:chunk', (_event, bytes, output) => { streamerFor(output).write(bytes); });
 
   ipcMain.handle('settings:load', async () => {
     try {
@@ -244,6 +264,8 @@ app.whenReady().then(() => {
   app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWindow());
 });
 
-app.on('before-quit', () => { streamer.stop(); });
+app.on('before-quit', () => {
+  Object.values(streamers).forEach(item => { try { item.stop(); } catch { /* already gone */ } });
+});
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

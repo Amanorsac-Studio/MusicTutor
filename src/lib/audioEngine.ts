@@ -60,7 +60,7 @@ type Voice = {
 
 export const METER_FLOOR_DB = -60;
 
-export type ChannelKind = 'input' | 'instrument' | 'master';
+export type ChannelKind = 'input' | 'instrument' | 'track' | 'click' | 'master';
 
 export type ChannelState = {
   id: string;
@@ -297,6 +297,59 @@ export class AudioEngine {
     if (this.programBus) node.connect(this.programBus);
   }
 
+  /**
+   * Attach an outside node to its own mixer strip.
+   *
+   * The backing track and the metronome used to be wired straight into the
+   * programme bus, which meant no fader, no meter and no mute for either of
+   * them. Giving each one a channel puts it on the desk with everything else.
+   */
+  connectToChannel(id: string, node: AudioNode, options: {
+    label: string; kind?: ChannelKind; gain?: number;
+  }): void {
+    this.ensure();
+    this.ensureChannel({ id, label: options.label, kind: options.kind, gain: options.gain });
+    const nodes = this.channels.get(id);
+    if (!nodes) return;
+    node.connect(nodes.gain);
+    nodes.state.connected = true;
+    this.announceChannels();
+  }
+
+  /**
+   * Tell the mixer the desk has changed.
+   *
+   * Strips used to be discovered only when the mixer itself did something, so a
+   * channel added by the backing track appeared nowhere until the page was
+   * revisited. Anything that adds or removes a strip says so here.
+   */
+  private channelListeners = new Set<() => void>();
+
+  onChannelsChanged(listener: () => void): () => void {
+    this.channelListeners.add(listener);
+    return () => { this.channelListeners.delete(listener); };
+  }
+
+  private announceChannels(): void {
+    this.channelListeners.forEach(listener => {
+      try { listener(); } catch { /* a bad listener must not break the mixer */ }
+    });
+  }
+
+  /**
+   * Attach a node so it is heard but not recorded or streamed.
+   *
+   * This is the whole point of a click track that stays in the room: the
+   * teacher needs to hear it, and the people watching do not. It goes past the
+   * programme bus straight to the monitor path, so it reaches the speakers and
+   * nothing else.
+   */
+  connectMonitorOnly(node: AudioNode): void {
+    const ctx = this.ensure();
+    if (this.monitorGain) node.connect(this.monitorGain);
+    else node.connect(ctx.destination);
+  }
+
   /** Stream carrying the full program mix, for MediaRecorder. */
   get recordingStream(): MediaStream | undefined {
     return this.recordingTap?.stream;
@@ -408,13 +461,15 @@ export class AudioEngine {
    * from startup so the Mixer always shows a full desk, whether or not anything
    * is plugged in yet.
    */
-  ensureChannel(options: { id: string; label: string; isVoice?: boolean; gain?: number }): ChannelState {
+  ensureChannel(options: {
+    id: string; label: string; isVoice?: boolean; gain?: number; kind?: ChannelKind;
+  }): ChannelState {
     const existing = this.channels.get(options.id);
     if (existing) return { ...existing.state };
     const state: ChannelState = {
       id: options.id,
       label: options.label,
-      kind: 'input',
+      kind: options.kind ?? 'input',
       gain: options.gain ?? 0.75,
       muted: false,
       soloed: false,
@@ -423,6 +478,15 @@ export class AudioEngine {
     };
     this.channels.set(options.id, this.createChannelNodes(state));
     return { ...state };
+  }
+
+  /** Take a strip off the desk entirely. */
+  dropChannel(id: string): void {
+    const nodes = this.channels.get(id);
+    if (!nodes) return;
+    try { nodes.gain.disconnect(); } catch { /* already detached */ }
+    this.channels.delete(id);
+    this.announceChannels();
   }
 
   /** Disconnect a channel's device but keep the strip on the desk. */

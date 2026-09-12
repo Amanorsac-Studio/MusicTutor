@@ -241,12 +241,24 @@ describe('Devices and Tutorial stay in step', () => {
   });
 });
 
+
+/**
+ * The output format buttons.
+ *
+ * Scoped to their own group: the second-shape switch beside them offers the
+ * same names, and an unscoped query cannot tell the two apart.
+ */
+const formatButton = (name: RegExp) =>
+  within(screen.getByRole('group', { name: 'Output format' })).getByRole('button', { name });
+
+const secondShapeButton = (name: RegExp) =>
+  within(screen.getByRole('group', { name: 'Second shape' })).getByRole('button', { name });
 describe('output formats', () => {
   it('offers landscape, portrait and square', async () => {
     render(<App />);
-    await waitFor(() => expect(screen.getByRole('button', { name: /Landscape/ })).toBeInTheDocument());
-    expect(screen.getByRole('button', { name: /Portrait/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Square/ })).toBeInTheDocument();
+    await waitFor(() => expect(formatButton(/Landscape/)).toBeInTheDocument());
+    expect(formatButton(/Portrait/)).toBeInTheDocument();
+    expect(formatButton(/Square/)).toBeInTheDocument();
   });
 
   it('keeps a separate layout per format', async () => {
@@ -255,12 +267,12 @@ describe('output formats', () => {
     await waitFor(() => expect(layoutCount()).toBe(1));
 
     // Portrait starts empty — it is its own arrangement, not a squashed copy.
-    fireEvent.click(screen.getByRole('button', { name: /Portrait/ }));
+    fireEvent.click(formatButton(/Portrait/));
     await waitFor(() => expect(layoutCount()).toBe(0));
     expect(screen.getByText(/No sources in the portrait layout/)).toBeInTheDocument();
 
     // Switching back finds the landscape work intact.
-    fireEvent.click(screen.getByRole('button', { name: /Landscape/ }));
+    fireEvent.click(formatButton(/Landscape/));
     await waitFor(() => expect(layoutCount()).toBe(1));
   });
 
@@ -268,7 +280,7 @@ describe('output formats', () => {
     render(<App />);
     await addSource(/Piano keyboard/);
     await waitFor(() => expect(layoutCount()).toBe(1));
-    fireEvent.click(screen.getByRole('button', { name: /Portrait/ }));
+    fireEvent.click(formatButton(/Portrait/));
     fireEvent.click(await screen.findByRole('button', { name: /Start from the landscape layout/ }));
     await waitFor(() => expect(layoutCount()).toBe(1));
   });
@@ -276,7 +288,7 @@ describe('output formats', () => {
   it('reshapes the canvas when the format changes', async () => {
     render(<App />);
     await waitFor(() => expect(screen.getByText(/1920 × 1080/)).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: /Portrait/ }));
+    fireEvent.click(formatButton(/Portrait/));
     await waitFor(() => expect(screen.getByText(/1080 × 1920/)).toBeInTheDocument());
   });
 });
@@ -437,5 +449,40 @@ describe('virtual keyboard', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'C#4' })).toHaveAttribute('aria-pressed', 'false');
     });
+  });
+});
+
+describe('two shapes at once', () => {
+  it('offers every other shape as a second output', async () => {
+    render(<App />);
+    await waitFor(() => expect(formatButton(/Landscape/)).toBeInTheDocument());
+    // Landscape is the main shape, so it is not offered as the second as well.
+    expect(secondShapeButton(/Off/)).toBeInTheDocument();
+    expect(secondShapeButton(/Portrait/)).toBeInTheDocument();
+    expect(secondShapeButton(/Square/)).toBeInTheDocument();
+  });
+
+  it('starts with one shape only, so nothing is paid for until it is asked for', async () => {
+    render(<App />);
+    await waitFor(() => expect(secondShapeButton(/Off/)).toHaveAttribute('aria-pressed', 'true'));
+  });
+
+  it('turns a second shape on and shows it', async () => {
+    render(<App />);
+    await waitFor(() => expect(secondShapeButton(/Portrait/)).toBeInTheDocument());
+    fireEvent.click(secondShapeButton(/Portrait/));
+    await waitFor(() => expect(secondShapeButton(/Portrait/)).toHaveAttribute('aria-pressed', 'true'));
+    expect(await screen.findByLabelText(/Portrait.*preview/i)).toBeInTheDocument();
+  });
+
+  it('drops the second shape when the main one becomes the same', async () => {
+    render(<App />);
+    await waitFor(() => expect(secondShapeButton(/Portrait/)).toBeInTheDocument());
+    fireEvent.click(secondShapeButton(/Portrait/));
+    await waitFor(() => expect(secondShapeButton(/Portrait/)).toHaveAttribute('aria-pressed', 'true'));
+
+    // Making portrait the main shape would leave it composed twice.
+    fireEvent.click(formatButton(/Portrait/));
+    await waitFor(() => expect(secondShapeButton(/Off/)).toHaveAttribute('aria-pressed', 'true'));
   });
 });

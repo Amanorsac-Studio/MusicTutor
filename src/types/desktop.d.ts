@@ -62,12 +62,14 @@ export type DesktopBridge = {
     options: {
       width: number; height: number; frameRate: number;
       videoBitrate: number; audioBitrate: number;
+      /** Which shape's encoder this is; each runs independently. */
+      output?: 'primary' | 'secondary';
     },
   ) => Promise<{ ok: boolean; message?: string; destinations?: string[] }>;
-  streamStop?: () => Promise<{ ok: boolean }>;
-  streamStatus?: () => Promise<StreamStatusBridge>;
-  /** One chunk of recorded WebM, forwarded to ffmpeg's stdin. */
-  streamChunk?: (bytes: ArrayBuffer) => void;
+  streamStop?: (output?: 'primary' | 'secondary') => Promise<{ ok: boolean }>;
+  streamStatus?: (output?: 'primary' | 'secondary') => Promise<StreamStatusBridge>;
+  /** One chunk of recorded WebM, forwarded to that output's ffmpeg. */
+  streamChunk?: (bytes: ArrayBuffer, output?: 'primary' | 'secondary') => void;
   onStreamStatus?: (handler: (status: StreamStatusBridge) => void) => () => void;
 };
 

@@ -39,14 +39,28 @@ export function StreamPage() {
   const addDestination = (platform: PlatformId) =>
     setDestinations(current => [...current, createDestination(platform)]);
 
+  /**
+   * Go live on every shape that has a destination waiting.
+   *
+   * Each shape is its own encoder, so one failing does not take the other down
+   * with it; the teacher is told which one could not start.
+   */
   const goLive = async () => {
     setBusy(true);
-    const failure = await liveStreamer.start(destinations, {
-      frameRate: settings.frameRate,
-      level: settings.videoQuality as QualityLevel,
-    });
+    const shapes: Array<'primary' | 'secondary'> = ['primary', 'secondary'];
+    const failures: string[] = [];
+    for (const output of shapes) {
+      const forShape = destinations.filter(item => item.enabled && item.output === output);
+      if (!forShape.length) continue;
+      const failure = await liveStreamer.start(forShape, {
+        frameRate: settings.frameRate,
+        level: settings.videoQuality as QualityLevel,
+        output,
+      });
+      if (failure) failures.push(`${output === 'primary' ? 'Main' : 'Second'} shape: ${failure}`);
+    }
     setBusy(false);
-    if (failure) setNotice(failure);
+    if (failures.length) setNotice(failures.join(' '));
   };
 
   const stop = async () => {
@@ -112,9 +126,13 @@ export function StreamPage() {
           </div>
 
           <p className="panel-hint">
-            The picture is the {getFormat(format).short.toLowerCase()} canvas at{' '}
-            {getFormat(format).aspect}, encoded once as H.264 and sent to every destination.
-            Streaming and recording can run together.
+            The main picture is the {getFormat(format).short.toLowerCase()} canvas at{' '}
+            {getFormat(format).aspect}.
+            {settings.secondaryFormat === 'off'
+              ? ' Switch on a second shape in the Tutorial tab to send a different picture to a vertical platform.'
+              : ` A second ${getFormat(settings.secondaryFormat).short.toLowerCase()} picture is being composed as well, and each destination below chooses which one it receives.`}
+            {' '}Each shape is encoded once and split to its own destinations. Streaming
+            and recording can run together.
           </p>
 
           {problems.length > 0 && !live && (
@@ -133,7 +151,10 @@ export function StreamPage() {
 
           {destinations.map(destination => {
             const platform = PLATFORMS[destination.platform];
-            const warning = formatWarning(destination, format);
+            const shape = destination.output === 'secondary' && settings.secondaryFormat !== 'off'
+              ? settings.secondaryFormat
+              : format;
+            const warning = formatWarning(destination, shape);
             const showing = revealed.has(destination.id);
             return (
               <div className="destination" key={destination.id}>
@@ -163,6 +184,23 @@ export function StreamPage() {
                       });
                     }}
                     options={PLATFORM_IDS.map(id => ({ value: id, label: PLATFORMS[id].name }))}
+                  />
+                  <Select
+                    label={`${destination.name} picture`}
+                    value={destination.output}
+                    disabled={live}
+                    onChange={value => update(destination.id, {
+                      output: value === 'secondary' ? 'secondary' : 'primary',
+                    })}
+                    options={[
+                      { value: 'primary', label: `Main · ${getFormat(format).short}` },
+                      {
+                        value: 'secondary',
+                        label: settings.secondaryFormat === 'off'
+                          ? 'Second shape (off)'
+                          : `Second · ${getFormat(settings.secondaryFormat).short}`,
+                      },
+                    ]}
                   />
                   <button
                     className="layer-toggle"

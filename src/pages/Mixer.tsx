@@ -1,4 +1,17 @@
-import { AudioLines, Gauge, Piano, Sparkles, WandSparkles } from 'lucide-react';
+import { AudioLines, Gauge, Music4, Piano, Sparkles, Timer, WandSparkles } from 'lucide-react';
+
+/** What each kind of strip is and what its subtitle should say. */
+const STRIP_ICON = {
+  instrument: <Piano />,
+  track: <Music4 />,
+  click: <Timer />,
+};
+
+const STRIP_NOTE: Record<string, string> = {
+  instrument: 'Built-in / MIDI',
+  track: 'Imported audio',
+  click: 'Metronome',
+};
 import { Select } from '../components/Select';
 import { Toggle, VerticalMeter, formatDb } from '../components/common';
 import { useStudio } from '../lib/useStudio';
@@ -38,15 +51,15 @@ export function Mixer() {
             return (
               <div className={`channel-strip ${audible ? '' : 'silenced'}`} key={channel.id}>
                 <div className="strip-head">
-                  <span className={`channel-icon ${channel.kind === 'instrument' ? 'instrument' : ''}`}>
-                    {channel.kind === 'instrument' ? <Piano /> : <AudioLines />}
+                  <span className={`channel-icon ${channel.kind}`}>
+                    {STRIP_ICON[channel.kind as keyof typeof STRIP_ICON] ?? <AudioLines />}
                   </span>
                   <b>{channel.label}</b>
                   <small>
                     {channel.error
                       ? channel.error
-                      : channel.kind === 'instrument'
-                        ? 'Built-in / MIDI'
+                      : STRIP_NOTE[channel.kind]
+                        ? STRIP_NOTE[channel.kind]
                         : channel.connected
                           ? describeInputQuality(channel.channelCount, channel.sampleRate) || 'Connected'
                           : 'No device — assign one on Devices'}

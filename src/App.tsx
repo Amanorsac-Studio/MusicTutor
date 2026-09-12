@@ -10,6 +10,7 @@ import { Mixer } from './pages/Mixer';
 import { LibraryPage } from './pages/LibraryPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { StreamPage } from './pages/StreamPage';
+import { trackPlayer } from './lib/player';
 import { formatDuration } from './lib/settings';
 
 type Workspace = 'Studio' | 'Devices' | 'Mixer' | 'Stream' | 'Library' | 'Settings';
@@ -55,6 +56,17 @@ function Shell() {
         return;
       }
       if (!isTyping(event.target)) {
+        // Space starts and stops the backing track, the way it does in every
+        // other player. It has to preventDefault or it also scrolls the page
+        // and re-triggers whichever button was last clicked.
+        if (event.code === 'Space' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+          event.preventDefault();
+          const player = trackPlayer.state;
+          if (!player.track) setNotice('Import a track first, then space plays it.');
+          else if (player.playing) trackPlayer.pause();
+          else trackPlayer.play();
+          return;
+        }
         if (event.key.toLowerCase() === 'z' && !event.ctrlKey && !event.metaKey) {
           updateSettings({ computerKeyOctave: Math.max(-3, settings.computerKeyOctave - 1) });
           return;

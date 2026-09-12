@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { SceneCanvas } from '../components/SceneCanvas';
 import { TrackPanel } from '../components/TrackPanel';
+import { SecondShapePreview } from '../components/SecondShapePreview';
 import { DeviceSelect, Select } from '../components/Select';
 import { Meter, formatDb } from '../components/common';
 import { useStudio } from '../lib/useStudio';
@@ -52,6 +53,8 @@ export function Studio({ onOpenStream }: { onOpenStream?: () => void } = {}) {
 
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [viewZoom, setViewZoom] = useState(1);
+  /** Which half of the right column is showing while a source is selected. */
+  const [rightTab, setRightTab] = useState<'source' | 'track'>('source');
 
   const micChannel = channels.find(channel => channel.id === 'mic1');
   const selected = sources.find(source => source.id === selectedSourceId) ?? null;
@@ -273,7 +276,21 @@ export function Studio({ onOpenStream }: { onOpenStream?: () => void } = {}) {
 
       {/* -------------------------------------------------------- centre */}
       <section className="studio-center">
-        <div className="canvas-shell">
+        <div
+          className="canvas-shell"
+          /*
+           * Clicking the space around the canvas clears the selection. Clicking
+           * the canvas itself already does, but the margin around it looked
+           * like empty space and did nothing, which made a selection feel stuck.
+           * Controls in the top line are excluded, or picking a format would
+           * also deselect.
+           */
+          onPointerDown={event => {
+            const target = event.target as HTMLElement;
+            if (target.closest('button, input, select, .scene-canvas')) return;
+            setSelectedSourceId(null);
+          }}
+        >
           <div className="canvas-topline">
             <span>
               <Circle size={8} fill={recording ? '#ff4c55' : '#39dfa0'} color={recording ? '#ff4c55' : '#39dfa0'} />
@@ -291,6 +308,30 @@ export function Studio({ onOpenStream }: { onOpenStream?: () => void } = {}) {
                   title={OUTPUT_FORMATS[id].label}
                   onClick={() => setFormat(id)}
                 >{OUTPUT_FORMATS[id].short} {OUTPUT_FORMATS[id].aspect}</button>
+              ))}
+            </span>
+
+            {/*
+              * The second shape. A lesson is often wanted wide and tall at
+              * once, and each is framed from its own layout rather than
+              * cropped out of the other.
+              */}
+            <span className="format-switch second" role="group" aria-label="Second shape">
+              <small>+</small>
+              <button
+                className={settings.secondaryFormat === 'off' ? 'active' : ''}
+                aria-pressed={settings.secondaryFormat === 'off'}
+                title="Compose one shape only"
+                onClick={() => updateSettings({ secondaryFormat: 'off' })}
+              >Off</button>
+              {FORMAT_IDS.filter(id => id !== format).map(id => (
+                <button
+                  key={id}
+                  className={settings.secondaryFormat === id ? 'active' : ''}
+                  aria-pressed={settings.secondaryFormat === id}
+                  title={`Also compose ${OUTPUT_FORMATS[id].label}`}
+                  onClick={() => updateSettings({ secondaryFormat: id })}
+                >{OUTPUT_FORMATS[id].short}</button>
               ))}
             </span>
 
@@ -321,6 +362,10 @@ export function Studio({ onOpenStream }: { onOpenStream?: () => void } = {}) {
             />
           ) : (
             <div className="scene-canvas"><div className="scene-empty"><b>No scene selected</b></div></div>
+          )}
+
+          {settings.secondaryFormat !== 'off' && (
+            <SecondShapePreview format={settings.secondaryFormat} />
           )}
         </div>
 
@@ -394,19 +439,40 @@ export function Studio({ onOpenStream }: { onOpenStream?: () => void } = {}) {
 
       {/* --------------------------------------------------------- right */}
       <aside className="side right-panel">
-        {selected && <div className="inspector-title"><span>Source properties</span></div>}
+        {/*
+          * With nothing selected the column is the backing-track player, so it
+          * is useful through the whole lesson. With something selected both are
+          * wanted: adjusting a camera while the track plays is normal, and
+          * hiding the transport to show a colour picker is not.
+          */}
         {selected ? (
-          <SourceInspector
-            source={selected}
-            cameras={catalog.videoInputs}
-            canvas={canvasSize}
-            onChange={patch => updateSource(selected.id, patch)}
-            onRemove={() => removeSource(selected.id)}
-            onLayer={layerAction}
-          />
+          <>
+            <div className="panel-tabs">
+              <button
+                className={rightTab === 'source' ? 'active' : ''}
+                aria-pressed={rightTab === 'source'}
+                onClick={() => setRightTab('source')}
+              >Source</button>
+              <button
+                className={rightTab === 'track' ? 'active' : ''}
+                aria-pressed={rightTab === 'track'}
+                onClick={() => setRightTab('track')}
+              >Backing track</button>
+            </div>
+            {rightTab === 'source' ? (
+              <SourceInspector
+                source={selected}
+                cameras={catalog.videoInputs}
+                canvas={canvasSize}
+                onChange={patch => updateSource(selected.id, patch)}
+                onRemove={() => removeSource(selected.id)}
+                onLayer={layerAction}
+              />
+            ) : (
+              <TrackPanel />
+            )}
+          </>
         ) : (
-          // With nothing selected the column becomes the backing-track player,
-          // rather than sitting empty through the whole lesson.
           <TrackPanel />
         )}
       </aside>

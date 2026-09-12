@@ -481,3 +481,21 @@ kbd{min-width:84px;text-align:center;padding:6px 9px;border:1px solid #34495b;bo
 .transpose-row>button:disabled{opacity:.45;cursor:default}
 .transpose-row b{text-align:center;font-size:10px;color:#cfdbe6}
 .transpose-row .subtle-btn{width:auto;margin:0;padding:6px 9px;font-size:9px}
+
+/* Right-panel tabs */
+.panel-tabs{display:flex;gap:4px;background:#091622;border:1px solid var(--line);padding:3px;border-radius:7px;margin-bottom:12px}
+.panel-tabs button{flex:1;border:0;background:transparent;color:#71879a;border-radius:5px;padding:7px 6px;font-size:10px;cursor:pointer}
+.panel-tabs button.active{background:#153047;color:#fff}
+
+/* Mixer strips for the imported track and the click */
+.channel-icon.track{color:#ffb454;background:#3a2b12}
+.channel-icon.click{color:#7fd6a6;background:#123227}
+
+/* Second composed shape */
+.format-switch.second{margin-left:8px;gap:3px}
+.format-switch.second small{color:#5a7186;font-size:11px;padding:0 3px}
+.second-preview{position:absolute;right:14px;bottom:14px;border:1px solid #2c4358;border-radius:7px;overflow:hidden;background:#04090e;box-shadow:0 10px 26px #000a;pointer-events:none}
+.second-preview canvas{display:block;max-height:150px}
+.second-preview small{position:absolute;left:0;right:0;bottom:0;background:#000a;color:#cfe0ee;font-size:8px;padding:3px 5px;text-align:center}
+
+.canvas-shell{position:relative}

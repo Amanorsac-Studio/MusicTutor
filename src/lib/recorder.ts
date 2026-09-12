@@ -9,7 +9,7 @@
 
 import { audioEngine } from './audioEngine';
 import { MidiRecorder } from './midiFile';
-import { sceneCompositor } from './compositor';
+import { sceneCompositor, secondaryCompositor } from './compositor';
 import { bitrateFor, type QualityLevel } from './formats';
 
 export type RecordingQuality = {
@@ -58,6 +58,11 @@ export type RecordingResult = {
   midiEvents: number;
   width: number;
   height: number;
+  /** The second shape, when one was recorded alongside. */
+  secondPath?: string;
+  secondBytes?: number;
+  secondWidth?: number;
+  secondHeight?: number;
 };
 
 export class LessonRecorder {
@@ -65,6 +70,19 @@ export class LessonRecorder {
   private chunks: Blob[] = [];
   private canvasStream?: MediaStream;
   private mixedStream?: MediaStream;
+
+  /**
+   * A second take, in the other shape, running alongside the first.
+   *
+   * The same performance wanted wide and tall is one lesson, not two, so both
+   * are captured from the same moment rather than asking the teacher to play it
+   * twice. They share the programme audio; only the picture differs.
+   */
+  private secondRecorder?: MediaRecorder;
+  private secondChunks: Blob[] = [];
+  private secondStream?: MediaStream;
+  private secondSize = { width: 0, height: 0 };
+  private secondLabel = '';
   private startedAt = 0;
   private state: RecorderState = 'idle';
   /** Pixel size of the take in progress, for reporting. */
@@ -98,6 +116,8 @@ export class LessonRecorder {
     frameRate?: number;
     recordAudio?: boolean;
     recordMidi?: boolean;
+    /** Also record the other shape, labelled with this format's name. */
+    second?: { label: string };
   } = {}): Promise<void> {
     if (this.state !== 'idle') throw new Error('A recording is already in progress.');
     const quality = options.quality ?? QUALITY_PRESETS['1080p30'];
@@ -154,6 +174,36 @@ export class LessonRecorder {
         if (event.data && event.data.size) this.chunks.push(event.data);
       };
 
+      // The second shape, when one is wanted. It is started first so both
+      // recorders begin within a frame of each other.
+      if (options.second && secondaryCompositor.running) {
+        const secondCanvas = secondaryCompositor.captureStream(frameRate);
+        const secondVideo = secondCanvas.getVideoTracks();
+        if (secondVideo.length) {
+          const secondTracks: MediaStreamTrack[] = [...secondVideo];
+          if (recordAudio) {
+            secondTracks.push(...(audioEngine.recordingStream?.getAudioTracks() ?? []));
+          }
+          this.secondStream = secondCanvas;
+          this.secondSize = secondaryCompositor.outputSize;
+          this.secondLabel = options.second.label;
+          this.secondChunks = [];
+          const secondBitrate = options.level
+            ? bitrateFor(this.secondSize, frameRate, options.level)
+            : quality.videoBitsPerSecond;
+          this.secondRecorder = new MediaRecorder(
+            new MediaStream(secondTracks),
+            mimeType
+              ? { mimeType, videoBitsPerSecond: secondBitrate, audioBitsPerSecond: 256_000 }
+              : undefined,
+          );
+          this.secondRecorder.ondataavailable = event => {
+            if (event.data && event.data.size) this.secondChunks.push(event.data);
+          };
+          this.secondRecorder.start(1000);
+        }
+      }
+
       this.recorder.start(1000);
       this.startedAt = performance.now();
       if (options.recordMidi ?? true) this.midi.start(this.startedAt);
@@ -183,20 +233,43 @@ export class LessonRecorder {
     try { recorder.stop(); } catch { /* already stopped */ }
     await finished;
 
+    // Stop the second take alongside the first, so the two end together.
+    const second = this.secondRecorder;
+    const secondFinished = second
+      ? new Promise<void>(resolve => {
+        second.addEventListener('stop', () => resolve(), { once: true });
+        try { second.stop(); } catch { resolve(); }
+      })
+      : Promise.resolve();
+    await secondFinished;
+
     const midiEvents = this.midi.recording ? this.midi.stop() : [];
     const mimeType = recorder.mimeType || 'video/webm';
     const blob = new Blob(this.chunks, { type: mimeType });
     const buffer = await blob.arrayBuffer();
+    const secondBlob = this.secondChunks.length
+      ? new Blob(this.secondChunks, { type: mimeType })
+      : undefined;
+    const secondBuffer = secondBlob ? await secondBlob.arrayBuffer() : undefined;
+    const secondLabel = this.secondLabel;
+    const secondSize = { ...this.secondSize };
 
     this.cleanup();
     this.state = 'idle';
 
     const desktop = window.pianoTutorDesktop;
     let videoPath: string | undefined;
+    let secondPath: string | undefined;
     let midiPath: string | undefined;
     if (desktop) {
       const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
       videoPath = await desktop.saveRecording(buffer, name, extension).catch(() => undefined);
+      if (secondBuffer) {
+        // Named by shape, so the two files are never confused for takes.
+        secondPath = await desktop
+          .saveRecording(secondBuffer, `${name}_${secondLabel}`, extension)
+          .catch(() => undefined);
+      }
       if (midiEvents.length && desktop.saveMidi) {
         const midiBytes = this.midi.build();
         // Copy into a standalone ArrayBuffer for structured-clone over IPC.
@@ -209,6 +282,10 @@ export class LessonRecorder {
       videoPath, midiPath, bytes: buffer.byteLength, durationMs, mimeType,
       midiEvents: midiEvents.length,
       width: this.outputSize.width, height: this.outputSize.height,
+      secondPath,
+      secondBytes: secondBuffer?.byteLength,
+      secondWidth: secondSize.width || undefined,
+      secondHeight: secondSize.height || undefined,
     };
   }
 
@@ -217,12 +294,19 @@ export class LessonRecorder {
     if (this.recorder && this.state === 'recording') {
       try { this.recorder.stop(); } catch { /* noop */ }
     }
+    if (this.secondRecorder) {
+      try { this.secondRecorder.stop(); } catch { /* noop */ }
+    }
     this.midi.stop();
     this.cleanup();
     this.state = 'idle';
   }
 
   private cleanup(): void {
+    this.secondStream?.getVideoTracks().forEach(track => track.stop());
+    this.secondStream = undefined;
+    this.secondRecorder = undefined;
+    this.secondChunks = [];
     this.canvasStream?.getTracks().forEach(track => track.stop());
     // The mixed stream's audio tracks belong to the engine's tap and are reused
     // by the next recording, so only the canvas tracks are stopped above. The

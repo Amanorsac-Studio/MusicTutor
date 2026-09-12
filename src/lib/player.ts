@@ -51,6 +51,10 @@ export type PlayerState = {
   metronome: boolean;
   /** Beats of count-in before the track starts. */
   countIn: number;
+  /** Loudness of the click, separate from the track's own volume. */
+  clickVolume: number;
+  /** Whether the click reaches the recording and the stream. */
+  clickToStream: boolean;
   /** True while a new speed or transposition is being rendered. */
   rendering: boolean;
   /** 0..1 while rendering. */
@@ -96,6 +100,9 @@ export class TrackPlayer {
   private metronomeTimer = 0;
   private bpmOverride: number | null = null;
   private volume = 0.8;
+  private clickVolume = 0.5;
+  /** Whether the click is part of the recording and the stream. */
+  private clickToStream = false;
 
   private listeners = new Set<() => void>();
 
@@ -115,15 +122,39 @@ export class TrackPlayer {
     if (!this.gain) {
       this.gain = ctx.createGain();
       this.gain.gain.value = this.volume;
-      // Into the programme bus, so the track is monitored, mixed and recorded.
-      audioEngine.connectExternal(this.gain);
+      // Its own strip on the desk, so it has a fader, a meter and a mute like
+      // every other source rather than being wired invisibly into the mix.
+      audioEngine.connectToChannel('track', this.gain, {
+        label: 'Backing track', kind: 'track', gain: 0.8,
+      });
     }
     if (!this.metronomeGain) {
       this.metronomeGain = ctx.createGain();
-      this.metronomeGain.gain.value = 0.5;
-      audioEngine.connectExternal(this.metronomeGain);
+      this.metronomeGain.gain.value = this.clickVolume;
+      this.routeMetronome();
     }
     return { ctx, gain: this.gain, metronome: this.metronomeGain };
+  }
+
+  /**
+   * Send the click either into the mix or only to the speakers.
+   *
+   * A click in the recording is right when the lesson is a play-along and wrong
+   * when it is a performance, so it is a choice rather than a fixed decision.
+   */
+  private routeMetronome(): void {
+    const node = this.metronomeGain;
+    if (!node) return;
+    try { node.disconnect(); } catch { /* nothing attached yet */ }
+    if (this.clickToStream) {
+      audioEngine.connectToChannel('click', node, {
+        label: 'Metronome', kind: 'click', gain: 0.7,
+      });
+    } else {
+      // Monitor only, so the strip would be a fader that does nothing.
+      audioEngine.dropChannel('click');
+      audioEngine.connectMonitorOnly(node);
+    }
   }
 
   /* ---------------------------------------------------------------- *
@@ -189,6 +220,8 @@ export class TrackPlayer {
       loop: this.loopRange,
       looping: this.looping,
       metronome: this.metronomeOn,
+      clickVolume: this.clickVolume,
+      clickToStream: this.clickToStream,
       countIn: this.countIn,
       rendering: this.rendering,
       renderProgress: this.renderProgress,
@@ -490,6 +523,21 @@ export class TrackPlayer {
 
   setBpm(value: number): void {
     this.bpmOverride = Math.max(30, Math.min(300, Math.round(value)));
+    this.notify();
+  }
+
+  setClickVolume(value: number): void {
+    this.clickVolume = Math.max(0, Math.min(1, value));
+    if (this.metronomeGain && audioEngine.context) {
+      this.metronomeGain.gain.setTargetAtTime(this.clickVolume, audioEngine.context.currentTime, 0.02);
+    }
+    this.notify();
+  }
+
+  setClickToStream(value: boolean): void {
+    if (value === this.clickToStream) return;
+    this.clickToStream = value;
+    this.routeMetronome();
     this.notify();
   }
 

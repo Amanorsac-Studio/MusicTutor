@@ -149,6 +149,19 @@ export class SceneCompositor {
 
 export const sceneCompositor = new SceneCompositor();
 
+/**
+ * A second compositor, painting the same scene in the other shape.
+ *
+ * A lesson filmed once is wanted twice: wide for YouTube and tall for a phone.
+ * Cropping one from the other throws away the framing, so both are composed
+ * from the same scene using that format's own layout, and either can be
+ * recorded or streamed independently.
+ *
+ * It only runs when a second format is chosen, so nothing is paid for it
+ * otherwise.
+ */
+export const secondaryCompositor = new SceneCompositor();
+
 // Dev-only handle for diagnostics in the browser console. Stripped from production builds.
 if (import.meta.env?.DEV && typeof window !== 'undefined') {
   (window as unknown as Record<string, unknown>).__pianoTutorCompositor = sceneCompositor;

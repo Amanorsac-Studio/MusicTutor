@@ -23,7 +23,7 @@ import {
 import {
   getFormat, getResolution, renderSize, type OutputFormatId, type QualityLevel,
 } from './formats';
-import { sceneCompositor } from './compositor';
+import { sceneCompositor, secondaryCompositor } from './compositor';
 import { INPUT_SLOTS } from './inputs';
 import { detectChord, romanNumeral } from './chords';
 
@@ -130,6 +130,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
 
   const formatRef = useRef(format);
   formatRef.current = format;
+
+  const secondaryFormatRef = useRef(settings.secondaryFormat);
+  secondaryFormatRef.current = settings.secondaryFormat;
 
   const sources = layoutFor(activeScene, format);
 
@@ -286,6 +289,11 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const setFormat = useCallback((id: OutputFormatId) => {
     setFormatState(id);
     setSelectedSourceId(null);
+    // Making the main shape the same as the second would compose one picture
+    // twice and record two identical files, so the second stands down.
+    if (settingsRef.current.secondaryFormat === id) {
+      setSettings(current => ({ ...current, secondaryFormat: 'off' }));
+    }
   }, []);
 
   /** Start this format's layout from another one, rescaled to fit. */
@@ -384,11 +392,50 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         },
       };
     });
+    // The second shape paints the same scene from that format's own layout, so
+    // a portrait cut is framed for portrait rather than cropped out of a wide
+    // one. It shares the image cache, since both draw the same backdrops.
+    secondaryCompositor.setProvider(() => {
+      const notes = activeNotesRef.current;
+      const chord = detectChord(notes, settingsRef.current.accidental);
+      const numeral = chord
+        ? romanNumeral(chord, settingsRef.current.keyRoot, settingsRef.current.mode)
+        : null;
+      const second = secondaryFormatRef.current;
+      const spec = getFormat(second === 'off' ? 'portrait' : second);
+      return {
+        sources: layoutFor(activeSceneRef.current, (second === 'off' ? 'portrait' : second) as OutputFormatId),
+        canvas: { width: spec.width, height: spec.height },
+        context: {
+          activeNotes: notes,
+          accidental: settingsRef.current.accidental,
+          chordSymbol: chord?.symbol,
+          chordNumeral: numeral ?? undefined,
+          chordQuality: chord?.quality,
+          images,
+        },
+      };
+    });
+
     // Painting continuously keeps the canvas warm, so starting a recording
     // never captures a blank first frame.
     sceneCompositor.start(30);
-    return () => sceneCompositor.stop();
+    return () => {
+      sceneCompositor.stop();
+      secondaryCompositor.stop();
+    };
   }, []);
+
+  /** Only paint the second shape when one is actually chosen. */
+  useEffect(() => {
+    if (settings.secondaryFormat === 'off') {
+      secondaryCompositor.stop();
+      return;
+    }
+    const spec = getFormat(settings.secondaryFormat);
+    secondaryCompositor.setOutputSize(renderSize(spec, getResolution(settings.resolution)));
+    secondaryCompositor.start(30);
+  }, [settings.secondaryFormat, settings.resolution]);
 
   // The compositor renders at the real output size, so a 4K choice produces 4K
   // pixels rather than an upscaled 1080p frame.
@@ -509,6 +556,10 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       id: slot.id, label: slot.label, isVoice: slot.isVoice,
     }));
     syncChannels();
+    // The backing track and the metronome add their own strips when they are
+    // first used, so the desk has to hear about it rather than only refreshing
+    // when the mixer itself does something.
+    return audioEngine.onChannelsChanged(syncChannels);
   }, [syncChannels]);
 
   const attachInput = useCallback(async (options: { id: string; label: string; deviceId?: string; isVoice?: boolean }) => {
@@ -604,6 +655,11 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         frameRate: current.frameRate,
         recordAudio: current.recordAudio,
         recordMidi: current.recordMidi,
+        // The other shape is captured alongside when one is switched on, so a
+        // lesson filmed once yields both cuts.
+        second: current.secondaryFormat === 'off'
+          ? undefined
+          : { label: current.secondaryFormat },
       });
       setRecording(true);
       setElapsedMs(0);
@@ -622,9 +678,12 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       if (result.videoPath) {
         // Report the real pixel size, so a 4K choice is visibly a 4K file.
         const size = result.width ? ` (${result.width}×${result.height})` : '';
-        setNotice(result.midiPath
+        const both = result.secondPath
+          ? ` Second shape saved too (${result.secondWidth}×${result.secondHeight}).`
+          : '';
+        setNotice((result.midiPath
           ? `Saved video${size} and MIDI to ${result.videoPath}`
-          : `Saved${size} to ${result.videoPath}`);
+          : `Saved${size} to ${result.videoPath}`) + both);
       } else if (result.bytes) {
         setNotice('Recording finished. Install the desktop app to save it to disk.');
       } else {

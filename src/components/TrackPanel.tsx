@@ -264,6 +264,29 @@ export function TrackPanel() {
             it stays with a performance that breathes.
           </small>
 
+          <label className="inspector-field wide">
+            <span><Volume2 size={12} /> Click volume</span>
+            <input
+              type="range" min={0} max={100}
+              aria-label="Click volume"
+              value={Math.round(state.clickVolume * 100)}
+              onChange={event => trackPlayer.setClickVolume(Number(event.target.value) / 100)}
+            />
+          </label>
+
+          <label className="inspector-check">
+            <input
+              type="checkbox"
+              checked={state.clickToStream}
+              onChange={event => trackPlayer.setClickToStream(event.target.checked)}
+            />
+            Include the click in the recording and stream
+          </label>
+          <small className="field-hint">
+            Off by default: you hear the click, the people watching do not. Turn it on
+            for a play-along where the beat is part of the lesson.
+          </small>
+
           <label className="section-label">Count-in</label>
           <div className="inspector-buttons">
             {[0, 2, 4].map(beats => (

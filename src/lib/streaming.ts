@@ -77,6 +77,14 @@ export type Destination = {
   /** Stream key. A secret: never log it, never put it in a URL for display. */
   key: string;
   enabled: boolean;
+  /**
+   * Which composed shape this destination receives.
+   *
+   * A wide picture on a vertical platform is letterboxed into a thin band, so
+   * when both shapes are being composed each destination should take the one
+   * its platform expects.
+   */
+  output: 'primary' | 'secondary';
 };
 
 export type StreamStatus = {
@@ -102,6 +110,7 @@ export const createDestination = (platform: PlatformId = 'youtube'): Destination
   server: PLATFORMS[platform].server,
   key: '',
   enabled: true,
+  output: 'primary',
 });
 
 /**
@@ -180,6 +189,7 @@ export function normalizeDestinations(raw: unknown): Destination[] {
       server: typeof item.server === 'string' ? item.server : PLATFORMS[platform].server,
       key: typeof item.key === 'string' ? item.key : '',
       enabled: item.enabled !== false,
+      output: item.output === 'secondary' ? 'secondary' : 'primary',
     }];
   });
 }

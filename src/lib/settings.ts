@@ -38,6 +38,8 @@ export type AppSettings = {
   outputDeviceId: string;
   /** Which MIDI port to listen to; empty means every connected port. */
   midiInputId: string;
+  /** The other shape to compose at the same time, or 'off' for one only. */
+  secondaryFormat: 'off' | 'landscape' | 'portrait' | 'square';
   /** Which physical camera fills each teaching role. */
   faceCameraId: string;
   handCameraId: string;
@@ -71,6 +73,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   midiEcho: false,
   outputDeviceId: '',
   midiInputId: '',
+  secondaryFormat: 'off',
   faceCameraId: '',
   handCameraId: '',
   locale: typeof navigator !== 'undefined' ? navigator.language : 'en-US',
@@ -98,6 +101,11 @@ export function normalizeSettings(raw: unknown): AppSettings {
   result.keyRoot = ((Math.round(Number(result.keyRoot)) % 12) + 12) % 12;
   result.computerKeyOctave = Math.min(3, Math.max(-3, Math.round(Number(result.computerKeyOctave)) || 0));
   if (!QUALITY_PRESETS[result.quality]) result.quality = DEFAULT_SETTINGS.quality;
+  // A second format that is not a format, or is the same as the first, is off.
+  if (!['off', 'landscape', 'portrait', 'square'].includes(result.secondaryFormat)) {
+    result.secondaryFormat = 'off';
+  }
+  if (result.secondaryFormat === result.outputFormat) result.secondaryFormat = 'off';
   return result;
 }
 
