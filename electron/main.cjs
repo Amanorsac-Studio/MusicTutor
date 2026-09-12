@@ -76,20 +76,31 @@ app.whenReady().then(() => {
   session.defaultSession.setPermissionCheckHandler((_wc, permission) =>
     ['media', 'midi', 'midiSysex', 'audioCapture', 'videoCapture'].includes(permission));
 
-  session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+  /**
+   * Screen and desktop-audio capture.
+   *
+   * Windows can hand back everything the speakers are playing as a loopback
+   * stream, which is a far simpler answer than a virtual cable for getting a
+   * plug-in's sound into the app: nothing to install and nothing to configure.
+   * The video source is still required by the API even when only the audio is
+   * wanted, so a screen is picked and its picture thrown away in the renderer.
+   */
+  session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
     try {
       const sources = await desktopCapturer.getSources({ types: ['window', 'screen'] });
       const source =
-        sources.find(item => item.name && item.name.includes('PianoTutor')) ||
         sources.find(item => item.name === 'Entire screen') ||
         sources.find(item => item.id.startsWith('screen')) ||
+        sources.find(item => item.name && item.name.includes('PianoTutor')) ||
         sources[0];
       if (!source) { callback({}); return; }
-      callback({ video: source });
+      // 'loopback' is what the system is playing. Without it the request would
+      // capture a microphone, which is not what "desktop audio" means.
+      callback(request.audioRequested ? { video: source, audio: 'loopback' } : { video: source });
     } catch {
       callback({});
     }
-  });
+  }, { useSystemPicker: false });
 
   ipcMain.on('window:minimize', () => mainWindow?.minimize());
   ipcMain.on('window:maximize', () => (mainWindow?.isMaximized() ? mainWindow.unmaximize() : mainWindow?.maximize()));

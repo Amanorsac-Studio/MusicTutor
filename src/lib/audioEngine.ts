@@ -317,6 +317,61 @@ export class AudioEngine {
   }
 
   /**
+   * Capture whatever the computer is playing.
+   *
+   * This is the simple answer to getting a plug-in, a browser tab or any other
+   * app into the lesson: nothing to install, nothing to route. Windows hands
+   * back a loopback of the speaker output. The API insists on a video track
+   * even when only sound is wanted, so the picture is dropped immediately.
+   *
+   * Resolves with the channel state, including an `error` when it could not be
+   * opened. It never throws.
+   */
+  async captureDesktopAudio(id = 'desktop', label = 'Desktop audio'): Promise<ChannelState> {
+    this.removeChannel(id);
+    const state: ChannelState = {
+      id, label, kind: 'input', gain: 0.75, muted: false, soloed: false,
+      isVoice: false, connected: false,
+    };
+    const nodes = this.createChannelNodes(state);
+    this.channels.set(id, nodes);
+
+    try {
+      const media = navigator.mediaDevices as MediaDevices & {
+        getDisplayMedia?: (constraints: unknown) => Promise<MediaStream>;
+      };
+      if (!media.getDisplayMedia) throw new Error('Desktop audio needs the installed desktop app.');
+      const stream = await media.getDisplayMedia({ video: true, audio: true });
+
+      const audio = stream.getAudioTracks();
+      if (!audio.length) {
+        stream.getTracks().forEach(track => track.stop());
+        throw new Error('Windows did not share the system sound. Try again and tick "Share audio".');
+      }
+      // The picture was only ever a condition of the request.
+      stream.getVideoTracks().forEach(track => track.stop());
+
+      const ctx = this.ensure();
+      const audioOnly = new MediaStream(audio);
+      const source = ctx.createMediaStreamSource(audioOnly);
+      source.connect(nodes.gain);
+      nodes.source = source;
+      nodes.stream = audioOnly;
+      state.connected = true;
+      state.error = undefined;
+      const settings = audio[0].getSettings?.() ?? {};
+      state.channelCount = settings.channelCount;
+      state.sampleRate = settings.sampleRate ?? ctx.sampleRate;
+      state.trackLabel = audio[0].label;
+    } catch (error) {
+      state.connected = false;
+      state.error = error instanceof Error ? error.message : 'Desktop audio could not be captured.';
+    }
+    this.announceChannels();
+    return { ...state };
+  }
+
+  /**
    * Tell the mixer the desk has changed.
    *
    * Strips used to be discovered only when the mixer itself did something, so a

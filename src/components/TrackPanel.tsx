@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { trackPlayer } from '../lib/player';
 import { Waveform } from './Waveform';
+import { MetronomePanel } from './MetronomePanel';
 import type { BeatGrid } from '../lib/beats';
 
 const formatTime = (seconds: number): string => {
@@ -38,9 +39,15 @@ function barAndBeat(position: number, grid: BeatGrid): string {
   if (!beats.length) return 'No beat grid';
   let index = 0;
   while (index + 1 < beats.length && beats[index + 1] <= position) index += 1;
+
   const fromDownbeat = index - firstDownbeat;
+  // Beats before the first downbeat are a pickup, counted as bar zero rather
+  // than as negative bars, which is how a musician would describe them.
+  if (fromDownbeat < 0) {
+    return `Pickup · beat ${beatsPerBar + fromDownbeat + 1}`;
+  }
   const bar = Math.floor(fromDownbeat / beatsPerBar) + 1;
-  const beat = (((fromDownbeat % beatsPerBar) + beatsPerBar) % beatsPerBar) + 1;
+  const beat = (fromDownbeat % beatsPerBar) + 1;
   return `Bar ${bar} · beat ${beat}`;
 }
 
@@ -250,43 +257,6 @@ export function TrackPanel() {
             </small>
           )}
 
-          {/* Metronome */}
-          <label className="section-label">Metronome</label>
-          <div className="inspector-buttons">
-            <button
-              className={state.metronome ? 'active' : ''}
-              aria-pressed={state.metronome}
-              onClick={() => trackPlayer.setMetronome(!state.metronome)}
-            ><Timer size={13} />{state.metronome ? 'Clicking' : 'Click off'}</button>
-          </div>
-          <small className="field-hint">
-            The click follows the beats found in the track rather than an even pulse, so
-            it stays with a performance that breathes.
-          </small>
-
-          <label className="inspector-field wide">
-            <span><Volume2 size={12} /> Click volume</span>
-            <input
-              type="range" min={0} max={100}
-              aria-label="Click volume"
-              value={Math.round(state.clickVolume * 100)}
-              onChange={event => trackPlayer.setClickVolume(Number(event.target.value) / 100)}
-            />
-          </label>
-
-          <label className="inspector-check">
-            <input
-              type="checkbox"
-              checked={state.clickToStream}
-              onChange={event => trackPlayer.setClickToStream(event.target.checked)}
-            />
-            Include the click in the recording and stream
-          </label>
-          <small className="field-hint">
-            Off by default: you hear the click, the people watching do not. Turn it on
-            for a play-along where the beat is part of the lesson.
-          </small>
-
           <label className="section-label">Count-in</label>
           <div className="inspector-buttons">
             {[0, 2, 4].map(beats => (
@@ -314,6 +284,9 @@ export function TrackPanel() {
           </button>
         </>
       )}
+
+      {/* The click is useful with or without a track, so it sits outside. */}
+      <MetronomePanel state={state} />
     </div>
   );
 }

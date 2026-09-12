@@ -7,7 +7,10 @@ import type { ProjectSummary, RecordingSummary } from '../types/desktop';
 type Tab = 'Projects' | 'Recordings';
 
 export function LibraryPage() {
-  const { settings, setNotice, saveProjectFile, openProjectFile, scenes } = useStudio();
+  const {
+    settings, setNotice, saveProjectFile, openProjectFile, scenes,
+    openProject, updateProject, projectDirty,
+  } = useStudio();
   const [tab, setTab] = useState<Tab>('Projects');
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [recordings, setRecordings] = useState<RecordingSummary[]>([]);
@@ -92,7 +95,7 @@ export function LibraryPage() {
     await refresh();
   };
 
-  const openProject = async (filePath: string) => {
+  const loadProject = async (filePath: string) => {
     await openProjectFile(filePath);
   };
 
@@ -112,7 +115,22 @@ export function LibraryPage() {
             reopen it. A <b>recording</b> is the video and MIDI a lesson produced.
           </p>
         </div>
-        {naming ? (
+        {openProject && !naming ? (
+          <span className="save-actions">
+            <button
+              className="primary small"
+              onClick={() => void updateProject().then(() => refresh())}
+              disabled={!projectDirty}
+            >
+              <Check size={14} />
+              {projectDirty ? `Update “${openProject.name}”` : 'No changes to save'}
+            </button>
+            <button
+              className="subtle-btn"
+              onClick={() => { setDraftName(suggestedName()); setNaming(true); }}
+            ><Plus size={13} />Save as new</button>
+          </span>
+        ) : naming ? (
           <span className="name-field">
             <input
               aria-label="Project name"
@@ -200,7 +218,7 @@ export function LibraryPage() {
                 <button
                   aria-label={`Open ${project.name}`}
                   title="Load these scenes into the studio"
-                  onClick={() => void openProject(project.filePath)}
+                  onClick={() => void loadProject(project.filePath)}
                 ><FolderOpen /></button>
                 <small>SET-UP</small>
               </div>

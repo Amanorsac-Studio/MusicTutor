@@ -17,7 +17,7 @@
  * with a weak downbeat is carried by the ones either side of it.
  */
 
-import { onsetEnvelope, ANALYSIS_HOP } from './tempo';
+import { ONSET_HOP, frameTime, onsetEnvelope, removeDrift } from './onsets';
 
 /**
  * How strongly the tracker resists drifting off the tempo.
@@ -143,13 +143,13 @@ export function trackBeats(
   sampleRate: number,
   bpm: number,
   beatsPerBar = 4,
-  hopSize = ANALYSIS_HOP,
+  hopSize = ONSET_HOP,
 ): BeatGrid {
-  const envelope = conditionEnvelope(onsetEnvelope(samples, sampleRate, hopSize));
+  const envelope = removeDrift(onsetEnvelope(samples, sampleRate, hopSize));
   const hopSeconds = hopSize / sampleRate;
   const period = 60 / Math.max(1, bpm) / hopSeconds;
   const frames = trackBeatFrames(envelope, period);
-  const beats = frames.map(frame => frame * hopSeconds);
+  const beats = frames.map(frame => frameTime(frame, sampleRate, hopSize));
   return {
     beats,
     beatsPerBar,

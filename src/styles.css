@@ -499,3 +499,10 @@ kbd{min-width:84px;text-align:center;padding:6px 9px;border:1px solid #34495b;bo
 .second-preview small{position:absolute;left:0;right:0;bottom:0;background:#000a;color:#cfe0ee;font-size:8px;padding:3px 5px;text-align:center}
 
 .canvas-shell{position:relative}
+
+/* This is an application, not a document. Dragging across a panel should not
+   leave a blue smear of selected labels, and a double-click on a button should
+   not select its caption. Anything the user might genuinely want to copy — a
+   file path, a chat message, or anything they typed — opts back in. */
+.app{user-select:none;-webkit-user-select:none}
+input,textarea,.chat-line,.field-path,.selectable,[contenteditable]{user-select:text;-webkit-user-select:text}

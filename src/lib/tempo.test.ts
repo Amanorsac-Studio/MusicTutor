@@ -24,13 +24,24 @@ describe('onset envelope', () => {
 
   it('responds to attacks rather than steady tone', () => {
     const sampleRate = 22050;
-    const steady = new Float32Array(sampleRate);
+    const steady = new Float32Array(sampleRate * 2);
     for (let i = 0; i < steady.length; i++) steady[i] = Math.sin((i / sampleRate) * 2 * Math.PI * 440);
-    const clicks = clickTrack(120, 1, sampleRate);
+    const clicks = clickTrack(120, 2, sampleRate);
 
-    const sum = (env: Float32Array) => env.reduce((total, value) => total + value, 0);
-    // A constant sine has one onset at the very start; clicks have several.
-    expect(sum(onsetEnvelope(clicks, sampleRate))).toBeGreaterThan(sum(onsetEnvelope(steady, sampleRate)));
+    /*
+     * Peakiness, not total.
+     *
+     * The envelope is normalised, so summing it measures how flat it is rather
+     * than how strong the attacks are — and a tone with no attacks is flat, so
+     * it would win. What a beat tracker needs is an envelope that spikes at the
+     * attacks and rests between them, which is the ratio of peak to average.
+     */
+    const peakiness = (env: Float32Array) => {
+      const mean = env.reduce((total, value) => total + value, 0) / Math.max(1, env.length);
+      return mean > 0 ? Math.max(...env) / mean : 0;
+    };
+    expect(peakiness(onsetEnvelope(clicks, sampleRate)))
+      .toBeGreaterThan(peakiness(onsetEnvelope(steady, sampleRate)) * 2);
   });
 
   it('normalises to a peak of 1', () => {
@@ -48,7 +59,10 @@ describe('tempo detection', () => {
       const error = Math.abs((result.bpm - bpm) / bpm) * 100;
       expect(error, `detected ${result.bpm} for a ${bpm} bpm track`).toBeLessThan(1);
     }
-  });
+    // Ten full detections of sixteen-second tracks. Spectral analysis and beat
+    // tracking of each candidate cost real time, so this needs more than the
+    // default allowance; a single track on load takes well under a second.
+  }, 30_000);
 
   it('is accurate to a fraction of a percent, not a whole frame of lag', () => {
     // Whole-frame lags quantise the answer; the peak is interpolated to fix it.

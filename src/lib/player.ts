@@ -51,6 +51,8 @@ export type PlayerState = {
   metronome: boolean;
   /** Beats of count-in before the track starts. */
   countIn: number;
+  /** Beats to the bar, for the click running on its own. */
+  beatsPerBar: number;
   /** Loudness of the click, separate from the track's own volume. */
   clickVolume: number;
   /** Whether the click reaches the recording and the stream. */
@@ -97,6 +99,8 @@ export class TrackPlayer {
   private looping = true;
   private metronomeOn = false;
   private countIn = 0;
+  /** Accent every this many clicks when keeping time on its own. */
+  private beatsPerBar = 4;
   private metronomeTimer = 0;
   private bpmOverride: number | null = null;
   private volume = 0.8;
@@ -223,6 +227,7 @@ export class TrackPlayer {
       clickVolume: this.clickVolume,
       clickToStream: this.clickToStream,
       countIn: this.countIn,
+      beatsPerBar: this.beatsPerBar,
       rendering: this.rendering,
       renderProgress: this.renderProgress,
       bpm: this.bpm,
@@ -269,7 +274,9 @@ export class TrackPlayer {
     this.pausedAt = this.position;
     this.stopNode();
     this.playing = false;
-    this.stopMetronome();
+    // The click carries on by itself; only the track has stopped.
+    if (this.metronomeOn) this.startMetronome();
+    else this.stopMetronome();
     this.notify();
   }
 
@@ -277,7 +284,8 @@ export class TrackPlayer {
     this.stopNode();
     this.playing = false;
     this.pausedAt = this.bounds().start;
-    this.stopMetronome();
+    if (this.metronomeOn) this.startMetronome();
+    else this.stopMetronome();
     this.notify();
   }
 
@@ -330,7 +338,8 @@ export class TrackPlayer {
     this.startedAtContextTime = startAt;
     this.startedAtTrackTime = trackTime;
     if (countInSeconds > 0) this.tickCountIn(ctx, startAt);
-    this.startMetronome();
+    // Switching from keeping its own time to following the track.
+    if (this.metronomeOn) this.startMetronome();
     this.notify();
   }
 
@@ -509,10 +518,24 @@ export class TrackPlayer {
    * Metronome and count-in
    * ---------------------------------------------------------------- */
 
+  /**
+   * Switch the click on or off.
+   *
+   * It runs with or without a track. A teacher wanting a beat to practise
+   * scales to should not have to import a song first, so with nothing loaded it
+   * simply keeps time at the chosen tempo.
+   */
   setMetronome(value: boolean): void {
     this.metronomeOn = value;
-    if (value && this.playing) this.startMetronome();
+    if (value) this.startMetronome();
     else this.stopMetronome();
+    this.notify();
+  }
+
+  /** How many beats to the bar when the click is running on its own. */
+  setBeatsPerBar(value: number): void {
+    this.beatsPerBar = Math.max(1, Math.min(12, Math.round(value)));
+    if (this.metronomeOn) this.startMetronome();
     this.notify();
   }
 
@@ -523,6 +546,8 @@ export class TrackPlayer {
 
   setBpm(value: number): void {
     this.bpmOverride = Math.max(30, Math.min(300, Math.round(value)));
+    // A click already running has to pick up the new tempo, not finish the old.
+    if (this.metronomeOn) this.startMetronome();
     this.notify();
   }
 
@@ -582,7 +607,23 @@ export class TrackPlayer {
    */
   private startMetronome(): void {
     this.stopMetronome();
-    if (!this.metronomeOn || !this.playing) return;
+    if (!this.metronomeOn) return;
+    void audioEngine.resume();
+    // Build the nodes now, so the first click is not late while the graph is
+    // assembled underneath it.
+    this.nodes();
+    if (this.playing && this.info?.grid.beats.length) this.followTrack();
+    else this.freeRun();
+  }
+
+  /**
+   * Click along with the track's own beats.
+   *
+   * Using the grid rather than a fixed interval is what keeps the click with
+   * the music: a track played by a person drifts, and a metronome running off
+   * the average tempo walks away from it within a minute.
+   */
+  private followTrack(): void {
     const ctx = audioEngine.context;
     const grid = this.info?.grid;
     if (!ctx || !grid) return;
@@ -594,12 +635,8 @@ export class TrackPlayer {
       if (!this.playing || !this.metronomeOn) return;
       const now = this.position;
       const until = now + lookahead * this.speed;
-      const beats = grid.beats.length
-        ? grid.beats
-        : // No grid: fall back to an even pulse at the chosen tempo.
-        Array.from({ length: 64 }, (_, i) => i * beatLength(this.bpm));
 
-      beats.forEach((beat, index) => {
+      grid.beats.forEach((beat, index) => {
         if (beat <= Math.max(now, scheduledTo) || beat > until) return;
         // Track time to wall-clock: the gap shrinks as the speed rises.
         const at = ctx.currentTime + (beat - now) / this.speed;
@@ -608,6 +645,36 @@ export class TrackPlayer {
         this.click(at, downbeat);
       });
       scheduledTo = until;
+      this.metronomeTimer = window.setTimeout(pump, (lookahead / 2) * 1000);
+    };
+    pump();
+  }
+
+  /**
+   * Keep time on its own, with no track involved.
+   *
+   * Clicks are scheduled a little ahead on the audio clock rather than fired by
+   * a timer, because a timer in a browser drifts and stutters, and a metronome
+   * that does either is worse than none.
+   */
+  private freeRun(): void {
+    const ctx = audioEngine.context;
+    if (!ctx) return;
+    const lookahead = 0.4;
+    let nextBeat = ctx.currentTime + 0.12;
+    let count = 0;
+
+    const pump = () => {
+      if (!this.metronomeOn) return;
+      // The track taking over is handled by whoever starts playback.
+      if (this.playing && this.info?.grid.beats.length) { this.followTrack(); return; }
+      const beat = beatLength(this.bpm);
+      const until = ctx.currentTime + lookahead;
+      while (nextBeat < until) {
+        this.click(nextBeat, this.beatsPerBar > 1 && count % this.beatsPerBar === 0);
+        nextBeat += beat;
+        count += 1;
+      }
       this.metronomeTimer = window.setTimeout(pump, (lookahead / 2) * 1000);
     };
     pump();

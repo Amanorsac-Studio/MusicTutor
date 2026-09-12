@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Cable, ExternalLink, Play, Plug, RotateCcw, Search } from 'lucide-react';
+import { Cable, ExternalLink, Play, Plug, RotateCcw, Search, Speaker } from 'lucide-react';
 import {
   CABLE_DOWNLOADS, PLUGIN_EXTENSIONS, filterPlugins, findVirtualCables, formatLabel,
   looksLikeInstrument, sortPlugins, tidyName, type Plugin,
 } from '../lib/plugins';
 import { openExternal } from '../lib/openExternal';
+import { audioEngine } from '../lib/audioEngine';
 
 /**
  * Virtual instruments installed on this PC.
@@ -27,6 +28,17 @@ export function InstrumentsPanel({
   const [query, setQuery] = useState('');
   const [state, setState] = useState<'idle' | 'scanning' | 'done' | 'unavailable'>('idle');
   const [message, setMessage] = useState('');
+  const [capturing, setCapturing] = useState(false);
+
+  /** Take whatever the computer is playing as a mixer channel. */
+  const captureDesktop = async () => {
+    setCapturing(true);
+    const channel = await audioEngine.captureDesktopAudio();
+    setCapturing(false);
+    setMessage(channel.error
+      ? channel.error
+      : 'Desktop audio is on the mixer. Anything this PC plays is now in the lesson.');
+  };
 
   const scan = async () => {
     const desktop = window.pianoTutorDesktop;
@@ -55,7 +67,7 @@ export function InstrumentsPanel({
   const launch = async (plugin: Plugin) => {
     try {
       await window.pianoTutorDesktop?.launchPlugin?.(plugin.path);
-      setMessage(`Started ${plugin.name}. Set its audio output to a virtual cable, then pick that cable below.`);
+      setMessage(`Started ${plugin.name}. Set its output to the cable, then pick the cable below.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'That instrument would not start.');
     }
@@ -120,14 +132,31 @@ export function InstrumentsPanel({
         )}
       </div>
 
+      <label className="section-label">Getting the sound in</label>
+
+      <div className="cable-rows">
+        <div>
+          <Speaker size={14} />
+          <span>
+            <b>Capture everything this PC plays</b>
+            <small>Nothing to install. Picks up any app, not just instruments.</small>
+          </span>
+          <button className="subtle-btn" onClick={() => void captureDesktop()}>
+            {capturing ? 'Starting…' : 'Capture'}
+          </button>
+        </div>
+      </div>
+      <small className="field-hint">
+        The simplest route, and the one to try first. Use a cable instead when you need
+        one app on its own rather than the whole desktop.
+      </small>
+
       <div className="tip">
         <Cable />
         <p>
-          <b>The return path.</b> Windows will not let one app listen to another, so a
-          plug-in's sound reaches this app through a virtual audio device. Set the
-          instrument's output to the cable, then choose the same cable here and it
-          arrives on the App audio slot.
-          {cables.length ? '' : ' No virtual cable is installed yet.'}
+          <b>Or use a virtual cable.</b> Install one, set it as the instrument's output,
+          then choose it here.
+          {cables.length ? '' : ' None is installed yet — the links below are free.'}
         </p>
       </div>
 
@@ -159,11 +188,8 @@ export function InstrumentsPanel({
       )}
 
       <p className="panel-hint">
-        Plug-ins cannot run inside this app. Hosting a VST3 or CLAP means loading its
-        binary on the audio thread, which needs a native plug-in host rather than a web
-        one, so the standalone version plus a cable is the honest route. Run the
-        instrument on WASAPI or ASIO with a 128 or 256 sample buffer to keep it in time
-        with the keyboard.
+        Plug-ins do not run inside this app. Launch the instrument, set its audio output
+        to the cable, and pick that cable above.
       </p>
     </section>
   );

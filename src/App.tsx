@@ -38,6 +38,7 @@ function Shell() {
   const {
     recording, elapsedMs, startRecording, stopRecording, notice, setNotice,
     panic, settings, updateSettings,
+    openProject, updateProject,
   } = useStudio();
 
   const desktop = window.pianoTutorDesktop;
@@ -85,14 +86,13 @@ function Shell() {
         else void startRecording();
       } else if (key === 's') {
         event.preventDefault();
-        void window.pianoTutorDesktop?.saveProject({
-          name: 'PianoTutor Lesson',
-          workspace,
-          keyRoot: settings.keyRoot,
-          mode: settings.mode,
-          savedAt: new Date().toISOString(),
-        }).then(path => setNotice(path ? `Project saved to ${path}` : 'Project saved'))
-          .catch(() => setNotice('Project could not be saved'));
+        // Update what is open; with nothing open, the Library is where a name
+        // is chosen, so go there rather than inventing one.
+        if (openProject) void updateProject();
+        else {
+          setWorkspace('Library');
+          setNotice('Name the project to save it.');
+        }
       } else if (key >= '1' && key <= '6') {
         event.preventDefault();
         setWorkspace(WORKSPACES[Number(key) - 1].id);
@@ -101,7 +101,7 @@ function Shell() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [recording, startRecording, stopRecording, panic, setNotice, workspace, settings.keyRoot, settings.mode, settings.computerKeyOctave, updateSettings]);
+  }, [recording, startRecording, stopRecording, panic, setNotice, workspace, settings.computerKeyOctave, updateSettings, openProject, updateProject]);
 
   return (
     <div className={`app ${desktop?.isDesktop ? 'desktop-app' : ''}`}>

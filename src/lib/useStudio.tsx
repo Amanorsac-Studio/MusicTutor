@@ -70,6 +70,12 @@ export type StudioValue = {
   /** Save every scene and preference as a reopenable project file. */
   saveProjectFile: (name: string) => Promise<string | undefined>;
   openProjectFile: (filePath: string) => Promise<void>;
+  /** The project currently open, if one was opened or saved this session. */
+  openProject: { name: string; filePath: string } | null;
+  /** Write over the open project. Does nothing when none is open. */
+  updateProject: () => Promise<string | undefined>;
+  /** True when something has changed since the open project was last written. */
+  projectDirty: boolean;
   addSource: (kind: SourceKind, overrides?: Partial<Source>) => string | null;
   updateSource: (id: string, patch: Partial<Source>) => void;
   removeSource: (id: string) => void;
@@ -241,6 +247,18 @@ export function StudioProvider({ children }: { children: ReactNode }) {
    * finished video; a project is the arrangement that produced it, so the same
    * lesson set-up can be reopened next week.
    */
+  /**
+   * Which project is open, so it can be updated rather than only saved anew.
+   *
+   * Without this every save made another file, and a teacher adjusting a
+   * lesson ended up with a folder of near-identical projects and no idea which
+   * one was current.
+   */
+  const [openProject, setOpenProject] = useState<{ name: string; filePath: string } | null>(null);
+  const [projectDirty, setProjectDirty] = useState(false);
+  const openProjectRef = useRef(openProject);
+  openProjectRef.current = openProject;
+
   const saveProjectFile = useCallback(async (name: string) => {
     const desktop = window.pianoTutorDesktop;
     if (!desktop?.saveProject) {
@@ -256,9 +274,22 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       settings: settingsRef.current,
       scene: scenesRef.current.find(item => item.id === activeSceneIdRef.current)?.name ?? 'Scene',
     }).catch(() => undefined);
+    if (path) {
+      setOpenProject({ name, filePath: path });
+      setProjectDirty(false);
+    }
     setNotice(path ? `Saved “${name}” to ${path}` : 'The project could not be saved');
     return path;
   }, []);
+
+  /** Write the current state over the project that is already open. */
+  const updateProject = useCallback(async () => {
+    const current = openProjectRef.current;
+    if (!current) return undefined;
+    const path = await saveProjectFile(current.name);
+    if (path) setNotice(`Updated “${current.name}”`);
+    return path;
+  }, [saveProjectFile]);
 
   /** Reopen a saved setup, replacing the current scenes and preferences. */
   const openProjectFile = useCallback(async (filePath: string) => {
@@ -280,11 +311,26 @@ export function StudioProvider({ children }: { children: ReactNode }) {
       setSelectedSourceId(null);
       const storedSettings = (raw as { settings?: unknown }).settings;
       if (storedSettings) setSettings(normalizeSettings(storedSettings));
-      setNotice(`Opened “${(raw as { name?: string }).name ?? 'project'}”`);
+      const name = (raw as { name?: string }).name ?? 'project';
+      setOpenProject({ name, filePath });
+      setProjectDirty(false);
+      setNotice(`Opened “${name}”`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'That project could not be opened.');
     }
   }, []);
+
+  /**
+   * Note that the lesson has moved on from what is on disk.
+   *
+   * Edits come from a dozen places, so rather than remembering to flag each
+   * one, the scenes and the settings are watched and any change marks the
+   * project unsaved.
+   */
+  useEffect(() => {
+    if (!openProjectRef.current) return;
+    setProjectDirty(true);
+  }, [scenes, settings, format]);
 
   const setFormat = useCallback((id: OutputFormatId) => {
     setFormatState(id);
@@ -716,7 +762,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     format, setFormat, canvasSize, seedLayoutFrom,
     scenes, activeSceneId, activeScene, sources, reorderScene,
     selectScene, addScene, duplicateScene, renameScene, deleteScene,
-    setSceneSources, saveProjectFile, openProjectFile,
+    setSceneSources, saveProjectFile, openProjectFile, openProject, updateProject, projectDirty,
     addSource, updateSource, removeSource, selectedSourceId, setSelectedSourceId,
     activeNotes, noteOn, noteOff, panic,
     recording, elapsedMs, startRecording, stopRecording,
@@ -728,7 +774,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     format, setFormat, canvasSize, seedLayoutFrom,
     scenes, activeSceneId, activeScene, sources, reorderScene,
     selectScene, addScene, duplicateScene, renameScene, deleteScene,
-    setSceneSources, saveProjectFile, openProjectFile,
+    setSceneSources, saveProjectFile, openProjectFile, openProject, updateProject, projectDirty,
     addSource, updateSource, removeSource, selectedSourceId,
     activeNotes, noteOn, noteOff, panic,
     recording, elapsedMs, startRecording, stopRecording, notice,

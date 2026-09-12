@@ -190,11 +190,9 @@ export function Devices() {
           <div className="tip">
             <Cable />
             <p>
-              <b>Plug-ins such as Kontakt</b> reach the app through a virtual audio device.
-              The Virtual instruments panel below finds what is installed, starts the
-              standalone version and sets up that return path in a click. If your audio
-              interface has physical outputs and inputs, a short cable from output back to
-              input does the same job with no software at all.
+              <b>Sound from another app, such as Kontakt.</b> Install a virtual cable, set
+              it as that app's output, and choose it below. The Virtual instruments panel
+              does both steps for you.
             </p>
           </div>
         </section>
