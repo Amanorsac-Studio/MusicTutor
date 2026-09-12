@@ -26,6 +26,7 @@ import {
 import { sceneCompositor } from './compositor';
 import { INPUT_SLOTS } from './inputs';
 import { detectChord, romanNumeral } from './chords';
+import { chordHistory, isChordWorthKeeping, staffColumns } from './chordHistory';
 
 export type StudioValue = {
   settings: AppSettings;
@@ -341,6 +342,21 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /*
+   * Remember each chord as it is played, for the notation staff.
+   *
+   * Recording happens while the chord is still held rather than on release, so
+   * the staff shows it the moment it is recognised; a chord still down is drawn
+   * as the live one, so nothing appears twice.
+   */
+  useEffect(() => {
+    if (!isChordWorthKeeping(activeNotes)) return;
+    const chord = detectChord(activeNotes, settings.accidental);
+    if (!chord) return;
+    const numeral = romanNumeral(chord, settings.keyRoot, settings.mode);
+    chordHistory.push([...activeNotes], chord.symbol, numeral ?? undefined);
+  }, [activeNotes, settings.accidental, settings.keyRoot, settings.mode]);
+
+  /*
    * Build the audio graph on the first click or key press.
    *
    * A browser will not start an AudioContext without a gesture, and building it
@@ -380,6 +396,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           chordSymbol: chord?.symbol,
           chordNumeral: numeral ?? undefined,
           chordQuality: chord?.quality,
+          staffColumns: staffColumns(chordHistory.current, [...notes], chord?.symbol),
           images,
         },
       };

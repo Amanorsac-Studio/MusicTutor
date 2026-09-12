@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Clock3, FileVideo, FolderOpen, Library, Music2, Play, Plus, RotateCcw } from 'lucide-react';
+import { Check, Clock3, FileVideo, FolderOpen, Library, Music2, Pencil, Play, Plus, RotateCcw, Trash2, X } from 'lucide-react';
 import { useStudio } from '../lib/useStudio';
 import { formatBytes, formatDateTime } from '../lib/settings';
 import type { ProjectSummary, RecordingSummary } from '../types/desktop';
@@ -13,6 +13,11 @@ export function LibraryPage() {
   const [recordings, setRecordings] = useState<RecordingSummary[]>([]);
   const [status, setStatus] = useState('Loading library…');
   const [busy, setBusy] = useState(false);
+  const [naming, setNaming] = useState(false);
+  const [draftName, setDraftName] = useState('');
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  const [confirming, setConfirming] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     const api = window.pianoTutorDesktop;
@@ -35,12 +40,56 @@ export function LibraryPage() {
 
   useEffect(() => { void refresh(); }, [refresh]);
 
-  /** Save the current set-up — every scene, layout and preference. */
-  const saveCurrent = async () => {
+  /**
+   * Save the current set-up under a name the user chooses.
+   *
+   * The field opens with a dated suggestion so pressing Enter still works, but
+   * a project you cannot name is a project you cannot find again next term.
+   */
+  const suggestedName = () => {
     const stamp = new Intl.DateTimeFormat(settings.locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date());
-    await saveProjectFile(`Lesson ${stamp}`);
+    return `Lesson ${stamp}`;
+  };
+
+  const saveCurrent = async () => {
+    const name = draftName.trim();
+    if (!name) return;
+    await saveProjectFile(name);
+    setNaming(false);
     await refresh();
     setTab('Projects');
+  };
+
+  /** Rename a saved project, on disk and in its own contents. */
+  const commitRename = async (filePath: string) => {
+    const name = renameDraft.trim();
+    if (!name) { setRenaming(null); return; }
+    try {
+      await window.pianoTutorDesktop?.renameProject?.(filePath, name);
+      setNotice(`Renamed to “${name}”`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'That project could not be renamed.');
+    }
+    setRenaming(null);
+    await refresh();
+  };
+
+  /**
+   * Delete a file for good, once the user has confirmed on the card itself.
+   *
+   * There is no undo and no recycle bin here, so the confirmation is a second
+   * deliberate click rather than a dialog that is dismissed by reflex.
+   */
+  const remove = async (filePath: string, kind: 'project' | 'recording') => {
+    try {
+      if (kind === 'project') await window.pianoTutorDesktop?.deleteProject?.(filePath);
+      else await window.pianoTutorDesktop?.deleteRecording?.(filePath);
+      setNotice('Deleted.');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'That file could not be deleted.');
+    }
+    setConfirming(null);
+    await refresh();
   };
 
   const openProject = async (filePath: string) => {
@@ -63,9 +112,29 @@ export function LibraryPage() {
             reopen it. A <b>recording</b> is the video and MIDI a lesson produced.
           </p>
         </div>
-        <button className="primary small" onClick={() => void saveCurrent()}>
-          <Plus />Save current set-up
-        </button>
+        {naming ? (
+          <span className="name-field">
+            <input
+              aria-label="Project name"
+              autoFocus
+              value={draftName}
+              onChange={event => setDraftName(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter') void saveCurrent();
+                if (event.key === 'Escape') setNaming(false);
+              }}
+            />
+            <button className="primary small" onClick={() => void saveCurrent()} disabled={!draftName.trim()}>
+              <Check size={14} />Save
+            </button>
+            <button className="subtle-btn" onClick={() => setNaming(false)}><X size={14} />Cancel</button>
+          </span>
+        ) : (
+          <button
+            className="primary small"
+            onClick={() => { setDraftName(suggestedName()); setNaming(true); }}
+          ><Plus />Save current set-up</button>
+        )}
       </header>
 
       <div className="library-toolbar">
@@ -136,9 +205,40 @@ export function LibraryPage() {
                 <small>SET-UP</small>
               </div>
               <div>
-                <b>{project.name}</b>
+                {renaming === project.filePath ? (
+                  <span className="name-field inline">
+                    <input
+                      aria-label={`Rename ${project.name}`}
+                      autoFocus
+                      value={renameDraft}
+                      onChange={event => setRenameDraft(event.target.value)}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter') void commitRename(project.filePath);
+                        if (event.key === 'Escape') setRenaming(null);
+                      }}
+                    />
+                    <button aria-label="Save name" onClick={() => void commitRename(project.filePath)}><Check size={13} /></button>
+                    <button aria-label="Cancel rename" onClick={() => setRenaming(null)}><X size={13} /></button>
+                  </span>
+                ) : (
+                  <b>{project.name}</b>
+                )}
                 <p>{formatDateTime(project.savedAt, settings.locale)} · {project.scene}</p>
-                <span>Click to load</span>
+                <div className="tile-actions">
+                  <button
+                    onClick={() => { setRenameDraft(project.name); setRenaming(project.filePath); }}
+                  ><Pencil size={12} />Rename</button>
+                  {confirming === project.filePath ? (
+                    <>
+                      <button className="danger" onClick={() => void remove(project.filePath, 'project')}>
+                        <Trash2 size={12} />Delete for good
+                      </button>
+                      <button onClick={() => setConfirming(null)}>Keep</button>
+                    </>
+                  ) : (
+                    <button onClick={() => setConfirming(project.filePath)}><Trash2 size={12} />Delete</button>
+                  )}
+                </div>
               </div>
             </article>
           ))}
@@ -158,7 +258,24 @@ export function LibraryPage() {
                 </small>
               </span>
               <span>{formatDateTime(recording.createdAt, settings.locale)}</span>
-              <button aria-label={`Open ${recording.name}`} onClick={() => open(recording.filePath)}><Play /></button>
+              <span className="row-actions">
+                <button aria-label={`Open ${recording.name}`} onClick={() => open(recording.filePath)}><Play /></button>
+                {confirming === recording.filePath ? (
+                  <>
+                    <button
+                      className="danger"
+                      aria-label={`Delete ${recording.name} for good`}
+                      onClick={() => void remove(recording.filePath, 'recording')}
+                    ><Check size={15} /></button>
+                    <button aria-label="Keep it" onClick={() => setConfirming(null)}><X size={15} /></button>
+                  </>
+                ) : (
+                  <button
+                    aria-label={`Delete ${recording.name}`}
+                    onClick={() => setConfirming(recording.filePath)}
+                  ><Trash2 size={15} /></button>
+                )}
+              </span>
             </div>
           ))}
         </section>

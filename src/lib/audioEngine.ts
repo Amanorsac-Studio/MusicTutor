@@ -130,7 +130,9 @@ export class AudioEngine {
   /** Capture latency reported by an attached input, in milliseconds. */
   inputLatencyMs(channelId: string): number {
     const track = this.channels.get(channelId)?.stream?.getAudioTracks()[0];
-    const latency = track?.getSettings?.().latency;
+    // Capture latency is real and reported by Chrome, but it is not in the
+    // standard MediaTrackSettings, so the type has to be widened by hand.
+    const latency = (track?.getSettings?.() as { latency?: number } | undefined)?.latency;
     return typeof latency === 'number' ? Math.round(latency * 10000) / 10 : 0;
   }
 
@@ -290,9 +292,10 @@ export class AudioEngine {
           sampleSize: { ideal: 24 },
           // Ask the driver for the smallest capture buffer it will give. Chrome
           // treats this as a hint, so it may be ignored; where it is honoured it
-          // is worth several milliseconds of round trip.
+          // is worth several milliseconds of round trip. Not in the standard
+          // constraint type, hence the cast at the end of the object.
           latency: { ideal: 0 },
-        },
+        } as MediaTrackConstraints & { latency?: ConstrainDouble },
         video: false,
       });
       const ctx = this.ensure();

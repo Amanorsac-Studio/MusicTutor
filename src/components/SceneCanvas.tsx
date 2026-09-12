@@ -17,7 +17,8 @@ import { PianoKeyboard } from './PianoKeyboard';
 import { cameraHub } from '../lib/cameraHub';
 import { findBackdrop } from '../lib/backdrops';
 import type { Accidental } from '../lib/chords';
-import { drawStaff } from '../lib/drawScene';
+import { drawStaff } from '../lib/drawStaff';
+import { chordHistory, staffColumns, type ChordEntry } from '../lib/chordHistory';
 
 const HANDLES: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
 
@@ -418,6 +419,7 @@ function SourceBody({
       return (
         <StaffView
           active={activeNotes}
+          liveLabel={chordSymbol}
           accidental={accidental}
           accent={props.accent ?? '#ffa629'}
           ink={props.color ?? '#0d1420'}
@@ -439,9 +441,10 @@ function SourceBody({
  * cleanly, and it saves watching the element for size changes.
  */
 function StaffView({
-  active, accidental, accent, ink, paper, nameNotes,
+  active, liveLabel, accidental, accent, ink, paper, nameNotes,
 }: {
   active: Set<number>;
+  liveLabel?: string;
   accidental: Accidental;
   accent: string;
   ink: string;
@@ -449,6 +452,8 @@ function StaffView({
   nameNotes: boolean;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const [history, setHistory] = useState<ChordEntry[]>([]);
+  useEffect(() => chordHistory.subscribe(setHistory), []);
   // A key that changes whenever the sounding notes do, so the effect reruns
   // without depending on a Set's identity.
   const notes = [...active].sort((a, b) => a - b).join(',');
@@ -457,16 +462,17 @@ function StaffView({
     const canvas = ref.current;
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
+    const sounding = notes ? notes.split(',').map(Number) : [];
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     drawStaff(ctx, { width: canvas.width, height: canvas.height }, {
-      active: new Set(notes ? notes.split(',').map(Number) : []),
+      columns: staffColumns(history, sounding, liveLabel),
       accidental,
       accent,
       ink,
       paper,
-      nameNotes,
+      showLabels: nameNotes,
     });
-  }, [notes, accidental, accent, ink, paper, nameNotes]);
+  }, [notes, history, liveLabel, accidental, accent, ink, paper, nameNotes]);
 
   return <canvas className="source-staff" ref={ref} width={760} height={400} />;
 }

@@ -142,3 +142,30 @@ export function noteOffsets(placements: Placement[]): number[] {
   });
   return offsets;
 }
+
+/* ------------------------------------------------------------------ *
+ * Clef glyphs
+ * ------------------------------------------------------------------ */
+
+/**
+ * Clefs drawn as curves rather than as the letters G and F.
+ *
+ * A music font cannot be relied on, and the words "treble" and "bass" are not
+ * what a musician reads for. Both shapes are defined in staff spaces, with the
+ * origin on the line the clef names, so they land correctly at any size.
+ */
+
+/** Points of an Archimedean spiral, for the eye of the G clef. */
+export function spiralPoints(
+  turns: number, startRadius: number, endRadius: number, steps = 48,
+): Array<[number, number]> {
+  const points: Array<[number, number]> = [];
+  const total = turns * Math.PI * 2;
+  for (let i = 0; i <= steps; i += 1) {
+    const t = i / steps;
+    const angle = t * total;
+    const radius = startRadius + (endRadius - startRadius) * t;
+    points.push([Math.cos(angle) * radius, Math.sin(angle) * radius]);
+  }
+  return points;
+}

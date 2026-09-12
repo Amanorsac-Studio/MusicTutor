@@ -430,3 +430,41 @@ kbd{min-width:84px;text-align:center;padding:6px 9px;border:1px solid #34495b;bo
 
 /* Staff source in the editor */
 .source-staff{width:100%;height:100%;display:block;border-radius:inherit}
+
+/* Naming, renaming and deleting in the Library */
+.name-field{display:flex;align-items:center;gap:7px}
+.name-field input{border:1px solid #2c455a;background:#091520;color:#fff;border-radius:6px;padding:9px 10px;font-size:12px;outline:none;min-width:230px}
+.name-field input:focus{border-color:var(--blue)}
+.name-field .subtle-btn{width:auto;margin:0}
+.name-field.inline input{min-width:0;width:100%;padding:5px 7px;font-size:11px}
+.name-field.inline button{border:1px solid #2a4357;background:#132638;color:#b4c1cd;border-radius:5px;width:24px;height:24px;display:grid;place-items:center;cursor:pointer;flex:none}
+.tile-actions{display:flex;gap:6px;margin-top:9px;flex-wrap:wrap}
+.tile-actions button{border:1px solid #263c50;background:#101f2d;color:#9fb0bf;border-radius:5px;padding:5px 8px;font-size:9px;display:flex;align-items:center;gap:5px;cursor:pointer}
+.tile-actions button:hover{background:#16283a;color:#fff}
+.tile-actions button.danger{border-color:#7c3235;background:#2a1417;color:#ff9fa4}
+.row-actions{display:flex;gap:4px;align-items:center;justify-self:end}
+.row-actions button{border:0;background:transparent;color:#8497aa;width:28px;height:28px;border-radius:5px;display:grid;place-items:center;cursor:pointer}
+.row-actions button:hover{background:#16283a;color:#fff}
+.row-actions button.danger{color:#ff8a90}
+.export-row{grid-template-columns:34px 1fr 80px auto}
+
+/* Virtual instruments */
+.plugin-search{display:flex;align-items:center;gap:8px;border:1px solid #2a4256;background:#0b1825;border-radius:7px;padding:8px 11px;color:#6e8296}
+.plugin-search input{flex:1;border:0;background:transparent;color:#fff;font-size:11px;outline:none}
+.plugin-list{max-height:300px;overflow:auto;margin-top:11px;scrollbar-width:thin;scrollbar-color:#294258 transparent}
+.plugin-row{display:grid;grid-template-columns:52px 1fr auto;align-items:center;gap:11px;border-top:1px solid #172b3b;padding:9px 2px}
+.plugin-row b,.plugin-row small{display:block}
+.plugin-row b{font-size:11px}
+.plugin-row small{font-size:9px;color:#72869a;margin-top:3px}
+.plugin-row .subtle-btn{width:auto;margin:0;padding:6px 10px}
+.plugin-tag{font-size:8px;font-weight:700;letter-spacing:.06em;text-align:center;padding:4px 5px;border-radius:4px;background:#132638;color:#61bcff;border:1px solid #24425c}
+.plugin-tag.standalone{background:#123a2e;color:#4fe0aa;border-color:#25604c}
+.plugin-tag.clap{background:#2d2250;color:#b79bff;border-color:#463a72}
+.plugin-note{font-size:9px;color:#5f7385}
+.cable-rows{display:flex;flex-direction:column;margin-top:6px}
+.cable-rows>div{display:grid;grid-template-columns:20px 1fr auto;gap:11px;align-items:center;border-top:1px solid #172b3b;padding:10px 2px}
+.cable-rows svg{color:#4fe0aa}
+.cable-rows b,.cable-rows small{display:block}
+.cable-rows b{font-size:11px}
+.cable-rows small{font-size:9px;color:#72869a;margin-top:3px}
+.cable-rows .subtle-btn{width:auto;margin:0;padding:6px 10px}

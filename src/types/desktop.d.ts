@@ -38,6 +38,17 @@ export type DesktopBridge = {
   openLibraryFolder: (kind: 'projects' | 'recordings') => Promise<string>;
   loadSettings: () => Promise<Record<string, unknown>>;
   saveSettings: (value: unknown) => Promise<string>;
+  /** Virtual instruments installed on this PC. Scanning only; nothing is hosted. */
+  scanPlugins?: () => Promise<Array<{
+    path: string; fileName: string; extension: string; vendor?: string; launchable: boolean;
+  }>>;
+  /** Start a standalone instrument that the scan found. */
+  launchPlugin?: (target: string) => Promise<string>;
+  /** Rename a saved project. Returns the new file path. */
+  renameProject?: (filePath: string, name: string) => Promise<string>;
+  /** Permanently remove a saved project or recording. */
+  deleteProject?: (filePath: string) => Promise<string>;
+  deleteRecording?: (filePath: string) => Promise<string>;
   /** Absolute paths of the library folders, for display in Settings. */
   paths?: () => Promise<{ projects: string; recordings: string }>;
 

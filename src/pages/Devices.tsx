@@ -10,6 +10,7 @@ import { midiManager } from '../lib/midi';
 import { cameraHub } from '../lib/cameraHub';
 import { INPUT_SLOTS, describeInputQuality } from '../lib/inputs';
 import { createCameraSource, type CameraRole } from '../lib/scene';
+import { InstrumentsPanel } from '../components/InstrumentsPanel';
 
 export function Devices() {
   const {
@@ -189,16 +190,11 @@ export function Devices() {
           <div className="tip">
             <Cable />
             <p>
-              <b>Getting Kontakt or another plug-in into the app.</b> Windows will not let one
-              app listen to another directly, so the sound has to travel through a virtual
-              audio device. Install VB-Audio Cable or VoiceMeeter, set Kontakt's output to that
-              cable, then choose the same cable here on the App audio slot. Kontakt is best run
-              standalone rather than inside a DAW, and set to WASAPI or ASIO with a 128 or 256
-              sample buffer so it stays in time with the keyboard. You will stop hearing Kontakt
-              on your speakers once its output goes to the cable, so monitor through this app
-              instead. The alternative, if your audio interface has physical outputs and
-              inputs, is a short cable from output back to input, which works with no software
-              at all.
+              <b>Plug-ins such as Kontakt</b> reach the app through a virtual audio device.
+              The Virtual instruments panel below finds what is installed, starts the
+              standalone version and sets up that return path in a click. If your audio
+              interface has physical outputs and inputs, a short cable from output back to
+              input does the same job with no software at all.
             </p>
           </div>
         </section>
@@ -246,6 +242,16 @@ export function Devices() {
             <RotateCcw size={14} />Rescan MIDI
           </button>
         </section>
+
+        <InstrumentsPanel
+          audioInputs={catalog.audioInputs}
+          routedDeviceId={channelFor('inst2')?.deviceId}
+          onRouteCable={(deviceId, name) => {
+            const slot = INPUT_SLOTS.find(item => item.id === 'inst2') ?? INPUT_SLOTS[0];
+            void assignInput(slot.id, deviceId, slot.label, slot.isVoice);
+            setNotice(`${name} is now feeding the ${slot.label} slot.`);
+          }}
+        />
 
         <section className="content-card">
           <div className="card-title">

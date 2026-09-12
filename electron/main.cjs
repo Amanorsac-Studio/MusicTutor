@@ -2,6 +2,10 @@ const { app, BrowserWindow, ipcMain, session, desktopCapturer, shell } = require
 const fs = require('fs/promises');
 const path = require('path');
 const { Streamer, ffmpegPath } = require('./streamer.cjs');
+const { scanPlugins, launchPlugin } = require('./plugins.cjs');
+
+/** The last scan, so a launch can only ever start something we found. */
+let knownPlugins = [];
 
 let streamer;
 
@@ -17,6 +21,23 @@ const safeFileName = (value, fallback) => {
 };
 
 const timestamp = () => new Date().toISOString().replace(/[:.]/g, '-');
+
+/**
+ * Resolve a path the renderer asked for, refusing anything outside the library.
+ *
+ * The renderer only ever sends paths this process handed it, but a path is
+ * still untrusted input, and the answer to "read that file for me" must never
+ * be able to reach the rest of the disk.
+ */
+function insideLibrary(target, folder) {
+  const resolved = path.resolve(String(target ?? ''));
+  const root = path.resolve(folder);
+  const withSeparator = root.endsWith(path.sep) ? root : root + path.sep;
+  if (resolved !== root && !resolved.startsWith(withSeparator)) {
+    throw new Error('That file is outside the library folder.');
+  }
+  return resolved;
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -100,6 +121,42 @@ app.whenReady().then(() => {
     return filePath;
   });
 
+  ipcMain.handle('project:read', async (_event, filePath) => {
+    const resolved = insideLibrary(filePath, projectsFolder());
+    const raw = await fs.readFile(resolved, 'utf8');
+    return JSON.parse(raw);
+  });
+
+  ipcMain.handle('project:rename', async (_event, filePath, nextName) => {
+    const resolved = insideLibrary(filePath, projectsFolder());
+    const raw = JSON.parse(await fs.readFile(resolved, 'utf8'));
+    const name = String(nextName ?? '').trim();
+    if (!name) throw new Error('A project needs a name.');
+
+    const target = path.join(projectsFolder(), `${safeFileName(name, 'Untitled_Lesson')}.pianotutor.json`);
+    // The display name is what the user typed; the file name is the safe
+    // version of it, so a project called "Grade 3 / scales" still saves.
+    await fs.writeFile(resolved, JSON.stringify({ ...raw, name }, null, 2), 'utf8');
+    if (target !== resolved) {
+      const taken = await fs.access(target).then(() => true, () => false);
+      if (taken) throw new Error('A project with that name already exists.');
+      await fs.rename(resolved, target);
+    }
+    return target;
+  });
+
+  ipcMain.handle('project:delete', async (_event, filePath) => {
+    const resolved = insideLibrary(filePath, projectsFolder());
+    await fs.unlink(resolved);
+    return resolved;
+  });
+
+  ipcMain.handle('recording:delete', async (_event, filePath) => {
+    const resolved = insideLibrary(filePath, recordingsFolder());
+    await fs.unlink(resolved);
+    return resolved;
+  });
+
   ipcMain.handle('project:list', async () => {
     const folder = projectsFolder();
     await fs.mkdir(folder, { recursive: true });
@@ -148,6 +205,13 @@ app.whenReady().then(() => {
     await shell.openExternal(target);
     return target;
   });
+
+  ipcMain.handle('plugins:scan', async () => {
+    knownPlugins = await scanPlugins();
+    return knownPlugins;
+  });
+
+  ipcMain.handle('plugins:launch', async (_event, target) => launchPlugin(knownPlugins, target));
 
   /* ----------------------------------------------------------- streaming */
 

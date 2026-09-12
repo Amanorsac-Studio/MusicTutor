@@ -23,7 +23,7 @@ export function LiveChatPanel() {
   const [error, setError] = useState('');
 
   const running = useRef(false);
-  const timer = useRef<number>();
+  const timer = useRef<number | undefined>(undefined);
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => () => {

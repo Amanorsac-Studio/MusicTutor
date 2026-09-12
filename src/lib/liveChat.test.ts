@@ -186,7 +186,7 @@ describe('fetchChatPage', () => {
   it('sends the page token on a follow-up request', async () => {
     const doFetch = vi.fn(async () => jsonResponse({ items: [] }));
     await fetchChatPage({ liveChatId: 'c', nextPageToken: 'page2' }, 'key', doFetch as unknown as typeof fetch);
-    expect(String(doFetch.mock.calls[0][0])).toContain('pageToken=page2');
+    expect(String((doFetch.mock.calls as unknown as string[][])[0][0])).toContain('pageToken=page2');
   });
 
   it('returns an empty page rather than throwing when the request fails', async () => {

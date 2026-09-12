@@ -7,7 +7,7 @@
  */
 export async function openExternal(url: string): Promise<void> {
   if (!/^https:\/\//i.test(url)) return;
-  const desktop = window.desktop;
+  const desktop = window.pianoTutorDesktop;
   if (desktop?.openExternal) {
     try {
       await desktop.openExternal(url);
