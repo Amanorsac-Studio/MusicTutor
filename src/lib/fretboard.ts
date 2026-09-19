@@ -23,8 +23,18 @@ export const BASS_TUNINGS: Record<BassTuning['id'], BassTuning> = {
   five: { id: 'five', label: '5-string · B E A D G', strings: [23, 28, 33, 38, 43] },
 };
 
-/** Frets drawn. Twelve covers where nearly all bass playing happens. */
+/** Frets drawn by default. Twelve covers where most bass playing happens. */
 export const FRET_COUNT = 12;
+
+/**
+ * Neck lengths on offer. Twelve reads best on screen; twenty-four is a full
+ * modern neck, for lines that climb past the octave.
+ */
+export const FRET_CHOICES = [12, 15, 17, 20, 24];
+
+/** Hold a fret count to something a real bass has. */
+export const clampFrets = (frets: number | undefined): number =>
+  Math.max(5, Math.min(24, Math.round(Number(frets)) || FRET_COUNT));
 
 export type FretPosition = {
   /** Index into the tuning's strings, 0 being the lowest. */
@@ -76,4 +86,7 @@ export const noteDegree = (midi: number, keyRoot: number): string =>
   DEGREES[(pitchClass(midi) - pitchClass(keyRoot) + 12) % 12];
 
 /** Frets that carry an inlay dot, as on nearly every real neck. */
-export const INLAY_FRETS = [3, 5, 7, 9, 12];
+export const INLAY_FRETS = [3, 5, 7, 9, 12, 15, 17, 19, 21, 24];
+
+/** The octave frets, which carry a double dot. */
+export const DOUBLE_INLAYS = [12, 24];

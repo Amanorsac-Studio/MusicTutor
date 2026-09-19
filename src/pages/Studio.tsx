@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  ArrowDown, ArrowUp, AudioLines, Camera, Guitar, ChevronsDown, ChevronsUp, Circle, Copy, Eye, EyeOff,
+  ArrowDown, ArrowUp, AudioLines, Camera, CaseSensitive, Guitar, ChevronsDown, ChevronsUp, Circle, Copy, Eye, EyeOff,
   Image as ImageIcon, Keyboard, Lock, Maximize, Mic2, Move, Music2, Piano, Plus,
   Radio, RotateCcw, Square, Trash2, Type, Unlock, Video, Volume2,
 } from 'lucide-react';
@@ -19,7 +19,7 @@ import {
 } from '../lib/scene';
 import { FORMAT_IDS, OUTPUT_FORMATS, getFormat, type OutputFormatId } from '../lib/formats';
 import { KEY_NAMES, noteName, scaleNotes, type Mode } from '../lib/chords';
-import { noteDegree } from '../lib/fretboard';
+import { FRET_CHOICES, noteDegree } from '../lib/fretboard';
 import { INPUT_SLOTS } from '../lib/inputs';
 import { BACKDROPS } from '../lib/backdrops';
 import { midiManager } from '../lib/midi';
@@ -39,6 +39,7 @@ const SOURCE_KINDS: MenuEntry[] = [
   { key: 'chord', label: 'Chord readout', kind: 'chord', Icon: Music2 },
   { key: 'staff', label: 'Notation staff', kind: 'staff', Icon: AudioLines },
   { key: 'fretboard', label: 'Bass fretboard', kind: 'fretboard', Icon: Guitar },
+  { key: 'notes', label: 'Note display', kind: 'notes', Icon: CaseSensitive },
   { key: 'image', label: 'Image', kind: 'image', Icon: ImageIcon },
   { key: 'color', label: 'Colour block', kind: 'color', Icon: Square },
 ];
@@ -459,6 +460,17 @@ export function Studio({ onOpenStream }: { onOpenStream?: () => void } = {}) {
                 >{tuning === 'four' ? '4-string' : '5-string'}</button>
               ))}
             </div>
+            <div className="key-mode" role="group" aria-label="Frets shown">
+              {FRET_CHOICES.map(frets => (
+                <button
+                  key={frets}
+                  className={settings.bassFrets === frets ? 'active' : ''}
+                  aria-pressed={settings.bassFrets === frets}
+                  title={`Show ${frets} frets`}
+                  onClick={() => updateSettings({ bassFrets: frets })}
+                >{frets}</button>
+              ))}
+            </div>
             <span className="key-scale">
               {channels.find(item => item.id === settings.bassInputId)?.connected
                 ? 'Listening. Add a Bass fretboard source to show the neck in the video.'
@@ -605,6 +617,9 @@ function SourceInspector({
   onRemove: () => void;
   onLayer: (direction: 'up' | 'down' | 'top' | 'bottom') => void;
 }) {
+  // Some choices belong to the instrument rather than to one source, so the
+  // inspector edits the shared setting instead of a copy of it.
+  const { settings: studioSettings, updateSettings: updateStudioSettings } = useStudio();
   const number = (label: string, key: 'x' | 'y' | 'width' | 'height') => (
     <label className="inspector-field">
       <span>{label}</span>
@@ -814,9 +829,79 @@ function SourceInspector({
         </>
       )}
 
+      {source.kind === 'notes' && (
+        <>
+          <label className="section-label">Note display</label>
+          <div className="inspector-field wide">
+            <span>Say the notes as</span>
+            <Select
+              label="Say the notes as"
+              value={source.props.noteMode ?? 'names'}
+              onChange={value => prop('noteMode', value as 'names' | 'solfa' | 'numbers')}
+              options={[
+                { value: 'names', label: 'Letter names · C E G' },
+                { value: 'solfa', label: 'Solfa · do mi sol' },
+                { value: 'numbers', label: 'Numbers · 1 3 5' },
+              ]}
+            />
+          </div>
+          <label className="inspector-field wide">
+            <span>Text colour</span>
+            <input
+              type="color"
+              aria-label="Text colour"
+              value={source.props.color ?? '#ffffff'}
+              onChange={event => prop('color', event.target.value)}
+            />
+          </label>
+          <div className="inspector-field wide">
+            <span>Align</span>
+            <Select
+              label="Note display alignment"
+              value={source.props.align ?? 'center'}
+              onChange={value => prop('align', value as 'left' | 'center' | 'right')}
+              options={[
+                { value: 'left', label: 'Left' },
+                { value: 'center', label: 'Centre' },
+                { value: 'right', label: 'Right' },
+              ]}
+            />
+          </div>
+          <div className="inspector-field wide">
+            <span>Background</span>
+            <Select
+              label="Note display background"
+              value={source.props.background === 'transparent' ? 'transparent' : 'panel'}
+              onChange={value => prop('background', value === 'transparent' ? 'transparent' : 'rgba(6,16,26,0.72)')}
+              options={[
+                { value: 'panel', label: 'Dark panel' },
+                { value: 'transparent', label: 'Transparent' },
+              ]}
+            />
+          </div>
+          <small className="field-hint">
+            Shows what is sounding, as large as the box allows. Solfa and numbers follow
+            the key set under the picture; in a minor key solfa starts on la. Make the
+            box bigger for bigger type.
+          </small>
+        </>
+      )}
+
       {source.kind === 'fretboard' && (
         <>
           <label className="section-label">Bass fretboard</label>
+          <div className="inspector-field wide">
+            <span>Frets shown</span>
+            <Select
+              label="Frets shown"
+              value={String(studioSettings.bassFrets)}
+              onChange={value => updateStudioSettings({ bassFrets: Number(value) })}
+              options={FRET_CHOICES.map(frets => ({
+                value: String(frets),
+                label: frets === 12 ? '12 · clearest on screen' : frets === 24 ? '24 · the whole neck' : `${frets} frets`,
+              }))}
+            />
+          </div>
           <label className="inspector-field wide">
             <span>Marker colour</span>
             <input

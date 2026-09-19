@@ -13,7 +13,17 @@ import { cameraHub } from './cameraHub';
 import { findBackdrop, paintBackdrop } from './backdrops';
 import { drawStaff } from './drawStaff';
 import { drawFretboard } from './drawFretboard';
+import { drawNotes } from './drawNotes';
+import { labelNotes, type NoteLabelMode } from './solfa';
+import type { Mode } from './chords';
 import { BASS_TUNINGS, type FretPosition } from './fretboard';
+
+/** What the corner of a note display says, so a viewer knows what they are reading. */
+export const NOTE_CAPTIONS: Record<NoteLabelMode, string> = {
+  names: 'Notes',
+  solfa: 'Solfa',
+  numbers: 'Numbers',
+};
 
 export type RenderContext = {
   /** Notes currently sounding, for the keyboard and chord readout. */
@@ -24,7 +34,13 @@ export type RenderContext = {
   chordNumeral?: string;
   chordQuality?: string;
   /** The note a bass is playing, when the lesson is about bass. */
-  bass?: { midi: number | null; position: FretPosition | null; tuning: 'four' | 'five'; keyRoot: number };
+  bass?: {
+    midi: number | null; position: FretPosition | null;
+    tuning: 'four' | 'five'; keyRoot: number; frets?: number;
+  };
+  /** The key, for saying notes as solfa or numbers. */
+  keyRoot?: number;
+  keyMode?: Mode;
   /** Images already loaded and ready to draw, keyed by source id. */
   images: Map<string, CanvasImageSource>;
 };
@@ -404,6 +420,30 @@ function drawSource(ctx: CanvasRenderingContext2D, source: Source, context: Rend
         accent: props.accent ?? '#ffa629',
         background: props.background ?? 'rgba(6,16,26,0.78)',
         showReadout: props.namePlayed !== false,
+        frets: context.bass?.frets,
+      });
+      break;
+    }
+
+    case 'notes': {
+      const labelMode: NoteLabelMode = props.noteMode ?? 'names';
+      // A bass plays one note and is heard, not keyed, so it comes from the
+      // pitch tracker; everything else comes from the keys being held.
+      const sounding = context.bass
+        ? (context.bass.midi === null ? [] : [context.bass.midi])
+        : [...context.activeNotes];
+      drawNotes(ctx, { width, height }, {
+        labels: labelNotes(sounding, labelMode, {
+          keyRoot: context.keyRoot ?? 0,
+          mode: context.keyMode ?? 'major',
+          accidental: context.accidental,
+        }),
+        caption: NOTE_CAPTIONS[labelMode],
+        color: props.color ?? '#ffffff',
+        accent: props.accent ?? '#ffa629',
+        background: props.background ?? 'rgba(6,16,26,0.72)',
+        align: props.align ?? 'center',
+        idle: '—',
       });
       break;
     }

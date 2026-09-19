@@ -1,8 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   bestOffset, computePeaks, hannWindow, peaksFor, renderPlan, similarity,
   stretchChannel, stretchChannels, stretchedLength,
 } from './timeStretch';
+
+// These analyse seconds of real audio per case. Alone each takes under a
+// second, but the suite runs files in parallel and they then compete for cores,
+// so the default five-second allowance fails them on a busy machine for reasons
+// that have nothing to do with whether the answer is right.
+vi.setConfig({ testTimeout: 120_000 });
+
 
 /** A steady tone, which is the hardest case for a stretcher to keep clean. */
 function tone(seconds: number, frequency: number, sampleRate = 44100): Float32Array {

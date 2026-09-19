@@ -67,3 +67,15 @@ describe('noteDegree', () => {
     expect(noteDegree(28, 0)).toBe(noteDegree(40, 0));
   });
 });
+
+describe('a longer neck', () => {
+  it('finds positions above the twelfth fret once they are shown', () => {
+    // G3 is past the twelfth fret of the G string, so it is off a short neck.
+    expect(positionsFor(43 + 14, four)).toEqual([]);
+    expect(positionsFor(43 + 14, four, 24)).toContainEqual({ string: 3, fret: 14 });
+  });
+
+  it('offers more places for the same note as the neck grows', () => {
+    expect(positionsFor(45, four, 24).length).toBeGreaterThan(positionsFor(45, four, 12).length);
+  });
+});

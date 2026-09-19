@@ -19,6 +19,9 @@ import { findBackdrop } from '../lib/backdrops';
 import type { Accidental } from '../lib/chords';
 import { drawStaff } from '../lib/drawStaff';
 import { drawFretboard } from '../lib/drawFretboard';
+import { drawNotes } from '../lib/drawNotes';
+import { NOTE_CAPTIONS } from '../lib/drawScene';
+import { labelNotes, type NoteLabelMode } from '../lib/solfa';
 import { BASS_TUNINGS } from '../lib/fretboard';
 import { useStudio } from '../lib/useStudio';
 
@@ -417,6 +420,19 @@ function SourceBody({
         />
       );
 
+    case 'notes':
+      return (
+        <NotesView
+          active={activeNotes}
+          accidental={accidental}
+          labelMode={props.noteMode ?? 'names'}
+          color={props.color ?? '#ffffff'}
+          accent={props.accent ?? '#ffa629'}
+          background={props.background ?? 'rgba(6,16,26,0.72)'}
+          align={props.align ?? 'center'}
+        />
+      );
+
     case 'fretboard':
       return (
         <FretboardView
@@ -579,8 +595,47 @@ function FretboardView({
       accent,
       background,
       showReadout,
+      frets: settings.bassFrets,
     });
-  }, [midi, bassPosition, settings.bassTuning, settings.keyRoot, accidental, accent, background, showReadout]);
+  }, [midi, bassPosition, settings.bassTuning, settings.bassFrets, settings.keyRoot, accidental, accent, background, showReadout]);
 
   return <canvas className="source-staff" ref={ref} width={1400} height={336} />;
+}
+
+/** The note display preview, drawn with the recording's own renderer. */
+function NotesView({
+  active, accidental, labelMode, color, accent, background, align,
+}: {
+  active: Set<number>;
+  accidental: Accidental;
+  labelMode: NoteLabelMode;
+  color: string;
+  accent: string;
+  background: string;
+  align: 'left' | 'center' | 'right';
+}) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const { bassNote, settings } = useStudio();
+  // In bass mode the note is heard rather than keyed.
+  const sounding = settings.instrument === 'bass'
+    ? (bassNote ? [bassNote.midi] : [])
+    : [...active];
+  const key = sounding.slice().sort((a, b) => a - b).join(',');
+
+  useEffect(() => {
+    const canvas = ref.current;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawNotes(ctx, { width: canvas.width, height: canvas.height }, {
+      labels: labelNotes(key ? key.split(',').map(Number) : [], labelMode, {
+        keyRoot: settings.keyRoot, mode: settings.mode, accidental,
+      }),
+      caption: NOTE_CAPTIONS[labelMode],
+      color, accent, background, align,
+      idle: '—',
+    });
+  }, [key, labelMode, settings.keyRoot, settings.mode, accidental, color, accent, background, align]);
+
+  return <canvas className="source-staff" ref={ref} width={1000} height={440} />;
 }

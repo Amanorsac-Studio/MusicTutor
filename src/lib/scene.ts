@@ -21,7 +21,7 @@ export const CANVAS_HEIGHT = 1080;
 
 export const LANDSCAPE_CANVAS: CanvasSize = { width: CANVAS_WIDTH, height: CANVAS_HEIGHT };
 
-export type SourceKind = 'camera' | 'keyboard' | 'staff' | 'fretboard' | 'text' | 'image' | 'color' | 'chord' | 'backdrop';
+export type SourceKind = 'camera' | 'keyboard' | 'staff' | 'fretboard' | 'notes' | 'text' | 'image' | 'color' | 'chord' | 'backdrop';
 
 /**
  * Cameras are assigned a teaching role rather than a bare device. A face
@@ -77,6 +77,8 @@ export type SourceProps = {
   /** chord: relative size of the Roman numeral against the chord name, 0.2..3. */
   numeralScale?: number;
   showQuality?: boolean;
+  /** notes: say the notes as letter names, solfa or scale numbers. */
+  noteMode?: 'names' | 'solfa' | 'numbers';
   /** shared: corner rounding in layout pixels. */
   radius?: number;
 };
@@ -173,6 +175,18 @@ function sourceDefaults(kind: SourceKind, canvas: CanvasSize): { name: string; r
         },
       };
     }
+    case 'notes':
+      return {
+        name: 'Note display',
+        rect: {
+          x: margin, y: Math.round(ch * 0.3),
+          width: Math.round(cw * 0.46), height: Math.round(ch * 0.22),
+        },
+        props: {
+          noteMode: 'names', color: '#ffffff', accent: '#ffa629',
+          background: 'rgba(6,16,26,0.72)', align: 'center', radius: 16,
+        },
+      };
     case 'fretboard': {
       // A neck is long and low, so it is sized from the canvas width and sits
       // along the bottom, where the keyboard would otherwise go.
@@ -545,7 +559,7 @@ export function rescaleLayout(sources: Source[], from: CanvasSize, to: CanvasSiz
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
 
-const VALID_KINDS: SourceKind[] = ['camera', 'keyboard', 'staff', 'fretboard', 'text', 'image', 'color', 'chord', 'backdrop'];
+const VALID_KINDS: SourceKind[] = ['camera', 'keyboard', 'staff', 'fretboard', 'notes', 'text', 'image', 'color', 'chord', 'backdrop'];
 
 function normalizeSource(item: unknown): Source | null {
   if (!item || typeof item !== 'object') return null;

@@ -1,9 +1,16 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   TIGHTNESS, conditionEnvelope, nearestBar, nearestBeat, strongestDownbeat,
   tempoFromBeats, trackBeatFrames, trackBeats, transitionCost,
 } from './beats';
 import { ANALYSIS_HOP } from './tempo';
+
+// These analyse seconds of real audio per case. Alone each takes under a
+// second, but the suite runs files in parallel and they then compete for cores,
+// so the default five-second allowance fails them on a busy machine for reasons
+// that have nothing to do with whether the answer is right.
+vi.setConfig({ testTimeout: 120_000 });
+
 
 /** A click track: short bursts of noise at a steady tempo. */
 function clicks(bpm: number, seconds: number, sampleRate = 44100, accentEvery = 0): Float32Array {

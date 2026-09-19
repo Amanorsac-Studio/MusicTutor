@@ -43,6 +43,8 @@ export type AppSettings = {
   /** The mixer channel the bass arrives on. */
   bassInputId: string;
   bassTuning: 'four' | 'five';
+  /** How much of the neck is shown and searched for positions. */
+  bassFrets: number;
   /** The other shape to compose at the same time, or 'off' for one only. */
   secondaryFormat: 'off' | 'landscape' | 'portrait' | 'square';
   /** Which physical camera fills each teaching role. */
@@ -81,6 +83,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   instrument: 'piano',
   bassInputId: 'inst1',
   bassTuning: 'four',
+  bassFrets: 12,
   secondaryFormat: 'off',
   faceCameraId: '',
   handCameraId: '',
@@ -111,6 +114,7 @@ export function normalizeSettings(raw: unknown): AppSettings {
   if (!QUALITY_PRESETS[result.quality]) result.quality = DEFAULT_SETTINGS.quality;
   if (result.instrument !== 'bass') result.instrument = 'piano';
   if (result.bassTuning !== 'five') result.bassTuning = 'four';
+  result.bassFrets = Math.max(5, Math.min(24, Math.round(Number(result.bassFrets)) || 12));
   // A second format that is not a format, or is the same as the first, is off.
   if (!['off', 'landscape', 'portrait', 'square'].includes(result.secondaryFormat)) {
     result.secondaryFormat = 'off';

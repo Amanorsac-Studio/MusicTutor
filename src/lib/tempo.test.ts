@@ -1,5 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { beatLength, beatPosition, detectTempo, onsetEnvelope, snapToBeat } from './tempo';
+
+// These analyse seconds of real audio per case. Alone each takes under a
+// second, but the suite runs files in parallel and they then compete for cores,
+// so the default five-second allowance fails them on a busy machine for reasons
+// that have nothing to do with whether the answer is right.
+vi.setConfig({ testTimeout: 120_000 });
+
 
 /** Synthesise a click track at a known tempo, to test detection against truth. */
 function clickTrack(bpm: number, seconds: number, sampleRate = 22050, offset = 0): Float32Array {

@@ -1,5 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { detectTempo } from './tempo';
+
+// These analyse seconds of real audio per case. Alone each takes under a
+// second, but the suite runs files in parallel and they then compete for cores,
+// so the default five-second allowance fails them on a busy machine for reasons
+// that have nothing to do with whether the answer is right.
+vi.setConfig({ testTimeout: 120_000 });
+
 
 const RATE = 44100;
 

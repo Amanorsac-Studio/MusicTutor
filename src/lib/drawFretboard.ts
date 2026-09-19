@@ -13,7 +13,7 @@
 
 import { noteName, type Accidental } from './chords';
 import {
-  FRET_COUNT, INLAY_FRETS, noteDegree, positionsFor,
+  DOUBLE_INLAYS, FRET_COUNT, INLAY_FRETS, clampFrets, noteDegree, positionsFor,
   type BassTuning, type FretPosition,
 } from './fretboard';
 
@@ -30,6 +30,8 @@ export type FretboardOptions = {
   background: string;
   /** Show the note name and its degree above the neck. */
   showReadout: boolean;
+  /** How many frets to draw; twelve when not given. */
+  frets?: number;
 };
 
 /**
@@ -51,6 +53,7 @@ export function drawFretboard(
   const { width, height } = box;
   if (width <= 0 || height <= 0) return;
   const { tuning } = options;
+  const frets = clampFrets(options.frets);
 
   if (options.background && options.background !== 'transparent') {
     ctx.fillStyle = options.background;
@@ -70,7 +73,7 @@ export function drawFretboard(
   const strings = tuning.strings.length;
   const stringY = (index: number) =>
     neckBottom - (neckHeight * (index + 0.5)) / strings;
-  const fretX = (fret: number) => neckLeft + (neckWidth * fret) / FRET_COUNT;
+  const fretX = (fret: number) => neckLeft + (neckWidth * fret) / frets;
 
   // The wood.
   ctx.fillStyle = '#2b1d14';
@@ -78,10 +81,10 @@ export function drawFretboard(
 
   // Inlay dots, which are how a player finds their place at a glance.
   ctx.fillStyle = 'rgba(235,225,205,0.32)';
-  INLAY_FRETS.forEach(fret => {
-    const x = neckLeft + neckWidth * fretCentre(fret);
+  INLAY_FRETS.filter(fret => fret <= frets).forEach(fret => {
+    const x = neckLeft + neckWidth * fretCentre(fret, frets);
     const radius = Math.min(neckHeight * 0.07, neckWidth * 0.012);
-    if (fret === 12) {
+    if (DOUBLE_INLAYS.includes(fret)) {
       [0.3, 0.7].forEach(at => {
         ctx.beginPath();
         ctx.arc(x, neckTop + neckHeight * at, radius, 0, Math.PI * 2);
@@ -95,7 +98,7 @@ export function drawFretboard(
   });
 
   // Fret wires, with the nut drawn heavier.
-  for (let fret = 0; fret <= FRET_COUNT; fret += 1) {
+  for (let fret = 0; fret <= frets; fret += 1) {
     ctx.strokeStyle = fret === 0 ? '#e9e2d0' : '#9c9483';
     ctx.lineWidth = fret === 0 ? Math.max(3, neckWidth * 0.006) : Math.max(1, neckWidth * 0.002);
     ctx.beginPath();
@@ -119,8 +122,8 @@ export function drawFretboard(
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
   ctx.font = `600 ${Math.max(8, pad * 0.62)}px Inter, system-ui, sans-serif`;
-  INLAY_FRETS.forEach(fret => {
-    ctx.fillText(String(fret), neckLeft + neckWidth * fretCentre(fret), neckBottom + pad * 0.25);
+  INLAY_FRETS.filter(fret => fret <= frets).forEach(fret => {
+    ctx.fillText(String(fret), neckLeft + neckWidth * fretCentre(fret, frets), neckBottom + pad * 0.25);
   });
 
   // String names at the far left.
@@ -134,14 +137,14 @@ export function drawFretboard(
 
   // Every place the note lives, with the likely one filled.
   const name = noteName(options.midi, options.accidental);
-  const markerRadius = Math.min(neckHeight / strings * 0.42, neckWidth / FRET_COUNT * 0.4);
-  positionsFor(options.midi, tuning).forEach(position => {
+  const markerRadius = Math.min(neckHeight / strings * 0.42, neckWidth / frets * 0.4);
+  positionsFor(options.midi, tuning, frets).forEach(position => {
     const likely = options.position
       && position.string === options.position.string
       && position.fret === options.position.fret;
     const x = position.fret === 0
       ? neckLeft - openRoom * 0.42
-      : neckLeft + neckWidth * fretCentre(position.fret);
+      : neckLeft + neckWidth * fretCentre(position.fret, frets);
     const y = stringY(position.string);
 
     ctx.beginPath();

@@ -443,7 +443,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
 
       let position = bassRef.current.position;
       if (changed) {
-        position = note ? likelyPosition(positionsFor(note.midi, tuning), lastPosition) : null;
+        position = note
+          ? likelyPosition(positionsFor(note.midi, tuning, settings.bassFrets), lastPosition)
+          : null;
         if (position) lastPosition = position;
         setBassPosition(position);
       }
@@ -452,7 +454,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     }, 25);
 
     return () => window.clearInterval(timer);
-  }, [settings.instrument, settings.bassInputId, settings.bassTuning, settings.concertPitch]);
+  }, [settings.instrument, settings.bassInputId, settings.bassTuning, settings.bassFrets, settings.concertPitch]);
 
   /*
    * Build the audio graph on the first click or key press.
@@ -486,7 +488,8 @@ export function StudioProvider({ children }: { children: ReactNode }) {
      */
     const bassContext = (chordSymbol?: string, chordNumeral?: string) => {
       const current = settingsRef.current;
-      if (current.instrument !== 'bass') return { chordSymbol, chordNumeral };
+      const key = { keyRoot: current.keyRoot, keyMode: current.mode };
+      if (current.instrument !== 'bass') return { chordSymbol, chordNumeral, ...key };
       const { note, position } = bassRef.current;
       return {
         chordSymbol: note ? noteName(note.midi, current.accidental) : undefined,
@@ -496,7 +499,9 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           position,
           tuning: current.bassTuning,
           keyRoot: current.keyRoot,
+          frets: current.bassFrets,
         },
+        ...key,
       };
     };
     sceneCompositor.setProvider(() => {
