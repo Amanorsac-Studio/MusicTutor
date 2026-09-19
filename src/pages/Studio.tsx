@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  ArrowDown, ArrowUp, AudioLines, Camera, ChevronsDown, ChevronsUp, Circle, Copy, Eye, EyeOff,
+  ArrowDown, ArrowUp, AudioLines, Camera, Guitar, ChevronsDown, ChevronsUp, Circle, Copy, Eye, EyeOff,
   Image as ImageIcon, Keyboard, Lock, Maximize, Mic2, Move, Music2, Piano, Plus,
   Radio, RotateCcw, Square, Trash2, Type, Unlock, Video, Volume2,
 } from 'lucide-react';
@@ -18,7 +18,9 @@ import {
   type CameraRole, type ChordDisplayMode, type Source, type SourceKind,
 } from '../lib/scene';
 import { FORMAT_IDS, OUTPUT_FORMATS, getFormat, type OutputFormatId } from '../lib/formats';
-import { KEY_NAMES, scaleNotes, type Mode } from '../lib/chords';
+import { KEY_NAMES, noteName, scaleNotes, type Mode } from '../lib/chords';
+import { noteDegree } from '../lib/fretboard';
+import { INPUT_SLOTS } from '../lib/inputs';
 import { BACKDROPS } from '../lib/backdrops';
 import { midiManager } from '../lib/midi';
 import { cameraHub } from '../lib/cameraHub';
@@ -36,6 +38,7 @@ const SOURCE_KINDS: MenuEntry[] = [
   { key: 'text', label: 'Text', kind: 'text', Icon: Type },
   { key: 'chord', label: 'Chord readout', kind: 'chord', Icon: Music2 },
   { key: 'staff', label: 'Notation staff', kind: 'staff', Icon: AudioLines },
+  { key: 'fretboard', label: 'Bass fretboard', kind: 'fretboard', Icon: Guitar },
   { key: 'image', label: 'Image', kind: 'image', Icon: ImageIcon },
   { key: 'color', label: 'Colour block', kind: 'color', Icon: Square },
 ];
@@ -48,7 +51,7 @@ export function Studio({ onOpenStream }: { onOpenStream?: () => void } = {}) {
     scenes, activeScene, activeSceneId, sources, selectScene, addScene, duplicateScene,
     renameScene, deleteScene, reorderScene, setSceneSources, addSource, updateSource, removeSource,
     selectedSourceId, setSelectedSourceId,
-    format, setFormat, canvasSize, seedLayoutFrom, setNotice,
+    format, setFormat, canvasSize, seedLayoutFrom, setNotice, bassNote,
   } = useStudio();
 
   const [addMenuOpen, setAddMenuOpen] = useState(false);
@@ -372,6 +375,20 @@ export function Studio({ onOpenStream }: { onOpenStream?: () => void } = {}) {
         {/* The key you are playing in, right under the picture, because chord
             numbers are meaningless without it and it changes song to song. */}
         <div className="key-bar">
+          {/*
+            * What the lesson is about. It decides what is listened to: keys and
+            * MIDI for piano, a single line from an audio input for bass.
+            */}
+          <div className="key-mode instrument-switch" role="group" aria-label="Instrument">
+            {(['piano', 'bass'] as const).map(instrument => (
+              <button
+                key={instrument}
+                className={settings.instrument === instrument ? 'active' : ''}
+                aria-pressed={settings.instrument === instrument}
+                onClick={() => updateSettings({ instrument })}
+              >{instrument}</button>
+            ))}
+          </div>
           <span className="key-bar-label">Key</span>
           <div className="key-chips" role="group" aria-label="Key">
             {KEY_NAMES.map((name, index) => (
@@ -396,10 +413,59 @@ export function Studio({ onOpenStream }: { onOpenStream?: () => void } = {}) {
           <span className="key-scale" aria-label="Notes in this key">
             {scaleNotes(settings.keyRoot, settings.mode).map(pc => KEY_NAMES[pc]).join(' ')}
           </span>
-          <span className="key-now">
-            {chord ? <><b>{chord.symbol}</b>{numeral && <i>{numeral}</i>}</> : <small>Play to analyse</small>}
-          </span>
+          {settings.instrument === 'bass' ? (
+            <span className="key-now">
+              {bassNote ? (
+                <>
+                  <b>{noteName(bassNote.midi, settings.accidental)}</b>
+                  <i>{noteDegree(bassNote.midi, settings.keyRoot)}</i>
+                  <small className="cents">
+                    {bassNote.cents === 0 ? 'in tune' : `${bassNote.cents > 0 ? '+' : ''}${bassNote.cents}¢`}
+                  </small>
+                </>
+              ) : <small>Play a note</small>}
+            </span>
+          ) : (
+            <span className="key-now">
+              {chord ? <><b>{chord.symbol}</b>{numeral && <i>{numeral}</i>}</> : <small>Play to analyse</small>}
+            </span>
+          )}
         </div>
+
+        {settings.instrument === 'bass' && (
+          <div className="key-bar bass-bar">
+            <span className="key-bar-label">Bass in</span>
+            <div className="key-mode" role="group" aria-label="Bass input">
+              {INPUT_SLOTS.map(slot => {
+                const channel = channels.find(item => item.id === slot.id);
+                return (
+                  <button
+                    key={slot.id}
+                    className={settings.bassInputId === slot.id ? 'active' : ''}
+                    aria-pressed={settings.bassInputId === slot.id}
+                    title={channel?.connected ? channel.trackLabel ?? slot.label : 'No device on this input yet'}
+                    onClick={() => updateSettings({ bassInputId: slot.id })}
+                  >{slot.label}</button>
+                );
+              })}
+            </div>
+            <div className="key-mode" role="group" aria-label="Strings">
+              {(['four', 'five'] as const).map(tuning => (
+                <button
+                  key={tuning}
+                  className={settings.bassTuning === tuning ? 'active' : ''}
+                  aria-pressed={settings.bassTuning === tuning}
+                  onClick={() => updateSettings({ bassTuning: tuning })}
+                >{tuning === 'four' ? '4-string' : '5-string'}</button>
+              ))}
+            </div>
+            <span className="key-scale">
+              {channels.find(item => item.id === settings.bassInputId)?.connected
+                ? 'Listening. Add a Bass fretboard source to show the neck in the video.'
+                : 'Assign your bass or interface to this input on the Devices tab.'}
+            </span>
+          </div>
+        )}
 
         <div className="transport">
           <div className="transport-meta">
@@ -744,6 +810,46 @@ function SourceInspector({
           <small className="field-hint">
             Sets the height so the keys keep a real instrument's proportions, which is
             what stops a long keyboard looking like a row of slivers.
+          </small>
+        </>
+      )}
+
+      {source.kind === 'fretboard' && (
+        <>
+          <label className="section-label">Bass fretboard</label>
+          <label className="inspector-field wide">
+            <span>Marker colour</span>
+            <input
+              type="color"
+              aria-label="Marker colour"
+              value={source.props.accent ?? '#ffa629'}
+              onChange={event => prop('accent', event.target.value)}
+            />
+          </label>
+          <div className="inspector-field wide">
+            <span>Background</span>
+            <Select
+              label="Fretboard background"
+              value={source.props.background === 'transparent' ? 'transparent' : 'panel'}
+              onChange={value => prop('background', value === 'transparent' ? 'transparent' : 'rgba(6,16,26,0.78)')}
+              options={[
+                { value: 'panel', label: 'Dark panel' },
+                { value: 'transparent', label: 'Transparent' },
+              ]}
+            />
+          </div>
+          <label className="inspector-check">
+            <input
+              type="checkbox"
+              checked={source.props.namePlayed !== false}
+              onChange={event => prop('namePlayed', event.target.checked)}
+            />
+            Show the note name and its degree
+          </label>
+          <small className="field-hint">
+            Shows the note the bass is playing, in the key set under the picture. Every
+            place it can be played is ringed, and the likeliest is filled. Switch the
+            instrument to bass for it to listen.
           </small>
         </>
       )}

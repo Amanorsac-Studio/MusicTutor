@@ -1,7 +1,7 @@
 {
-  "name": "pianotutor-studio",
+  "name": "musictutor-studio",
   "description": "Desktop lesson production studio for piano educators",
-  "author": "PianoTutor",
+  "author": "Amanorsac Studio",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -35,8 +35,8 @@
   },
   "main": "electron/main.cjs",
   "build": {
-    "appId": "com.pianotutor.studio",
-    "productName": "PianoTutor",
+    "appId": "studio.amanorsac.musictutor",
+    "productName": "MusicTutor",
     "directories": {
       "output": "installer"
     },
@@ -49,14 +49,14 @@
     ],
     "win": {
       "target": "nsis",
-      "artifactName": "PianoTutor-Setup-${version}.${ext}"
+      "artifactName": "MusicTutor-Setup-${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "PianoTutor"
+      "shortcutName": "MusicTutor"
     },
     "asarUnpack": [
       "node_modules/ffmpeg-static/**"

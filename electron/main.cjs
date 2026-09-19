@@ -12,8 +12,39 @@ const streamers = {};
 
 let mainWindow;
 
-const projectsFolder = () => path.join(app.getPath('documents'), 'PianoTutor', 'Projects');
-const recordingsFolder = () => path.join(app.getPath('videos'), 'PianoTutor');
+const projectsFolder = () => path.join(app.getPath('documents'), 'MusicTutor', 'Projects');
+const recordingsFolder = () => path.join(app.getPath('videos'), 'MusicTutor');
+
+/** Project files, under the current name and the one the app first shipped with. */
+const PROJECT_EXTENSIONS = ['.musictutor.json', '.pianotutor.json'];
+const isProjectFile = name => PROJECT_EXTENSIONS.some(extension => name.endsWith(extension));
+const stripProjectExtension = name =>
+  PROJECT_EXTENSIONS.reduce((result, extension) => result.replace(extension, ''), name);
+
+/**
+ * Carry everything over from when the app was called PianoTutor.
+ *
+ * The rename moves the settings folder and both library folders, and an update
+ * that appeared to delete every saved lesson would be unforgivable. Each old
+ * folder is copied across once, only when the new one does not exist yet, so a
+ * later launch never overwrites newer work with older.
+ */
+function migrateFromPianoTutor() {
+  const fsSync = require('fs');
+  const moves = [
+    [path.join(app.getPath('appData'), 'pianotutor-studio'), app.getPath('userData')],
+    [path.join(app.getPath('documents'), 'PianoTutor'), path.join(app.getPath('documents'), 'MusicTutor')],
+    [path.join(app.getPath('videos'), 'PianoTutor'), path.join(app.getPath('videos'), 'MusicTutor')],
+  ];
+  moves.forEach(([from, to]) => {
+    try {
+      if (!fsSync.existsSync(from) || fsSync.existsSync(to)) return;
+      // Copied rather than renamed: a copy that fails halfway leaves the
+      // original intact, where a failed rename can leave neither.
+      fsSync.cpSync(from, to, { recursive: true });
+    } catch { /* the old data stays where it was, which loses nothing */ }
+  });
+}
 
 /** Strip anything that could escape the target folder or upset Windows. */
 const safeFileName = (value, fallback) => {
@@ -48,7 +79,7 @@ function createWindow() {
     minHeight: 720,
     frame: false,
     backgroundColor: '#07111b',
-    title: 'PianoTutor',
+    title: 'MusicTutor',
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -67,6 +98,10 @@ function createWindow() {
   mainWindow.once('ready-to-show', () => mainWindow.show());
   mainWindow.on('closed', () => { mainWindow = undefined; });
 }
+
+// Before anything reads a setting, so the first launch under the new name
+// finds the old data already in place.
+migrateFromPianoTutor();
 
 app.whenReady().then(() => {
   // Grant the capture permissions the studio needs. Everything else is denied.
@@ -91,7 +126,7 @@ app.whenReady().then(() => {
       const source =
         sources.find(item => item.name === 'Entire screen') ||
         sources.find(item => item.id.startsWith('screen')) ||
-        sources.find(item => item.name && item.name.includes('PianoTutor')) ||
+        sources.find(item => item.name && item.name.includes('MusicTutor')) ||
         sources[0];
       if (!source) { callback({}); return; }
       // 'loopback' is what the system is playing. Without it the request would
@@ -110,7 +145,7 @@ app.whenReady().then(() => {
     const folder = recordingsFolder();
     await fs.mkdir(folder, { recursive: true });
     const ext = /^(webm|mp4|mov|mkv)$/i.test(String(extension || '')) ? String(extension).toLowerCase() : 'webm';
-    const filePath = path.join(folder, `${safeFileName(suggestedName, 'PianoTutor_Lesson')}_${timestamp()}.${ext}`);
+    const filePath = path.join(folder, `${safeFileName(suggestedName, 'MusicTutor_Lesson')}_${timestamp()}.${ext}`);
     await fs.writeFile(filePath, Buffer.from(bytes));
     return filePath;
   });
@@ -118,7 +153,7 @@ app.whenReady().then(() => {
   ipcMain.handle('midi:save', async (_event, bytes, suggestedName) => {
     const folder = recordingsFolder();
     await fs.mkdir(folder, { recursive: true });
-    const filePath = path.join(folder, `${safeFileName(suggestedName, 'PianoTutor_Lesson')}_${timestamp()}.mid`);
+    const filePath = path.join(folder, `${safeFileName(suggestedName, 'MusicTutor_Lesson')}_${timestamp()}.mid`);
     await fs.writeFile(filePath, Buffer.from(bytes));
     return filePath;
   });
@@ -126,9 +161,13 @@ app.whenReady().then(() => {
   ipcMain.handle('project:save', async (_event, project) => {
     const folder = projectsFolder();
     await fs.mkdir(folder, { recursive: true });
-    const filePath = path.join(folder, `${safeFileName(project && project.name, 'Untitled_Lesson')}.pianotutor.json`);
+    const filePath = path.join(folder, `${safeFileName(project && project.name, 'Untitled_Lesson')}.musictutor.json`);
     const payload = { ...(project || {}), version: 1, savedAt: new Date().toISOString() };
     await fs.writeFile(filePath, JSON.stringify(payload, null, 2), 'utf8');
+    // A project saved under the old name is superseded by this one; leaving it
+    // would list every updated project twice.
+    const legacy = filePath.replace(/.musictutor.json$/, '.pianotutor.json');
+    if (legacy !== filePath) await fs.unlink(legacy).catch(() => {});
     return filePath;
   });
 
@@ -144,7 +183,7 @@ app.whenReady().then(() => {
     const name = String(nextName ?? '').trim();
     if (!name) throw new Error('A project needs a name.');
 
-    const target = path.join(projectsFolder(), `${safeFileName(name, 'Untitled_Lesson')}.pianotutor.json`);
+    const target = path.join(projectsFolder(), `${safeFileName(name, 'Untitled_Lesson')}.musictutor.json`);
     // The display name is what the user typed; the file name is the safe
     // version of it, so a project called "Grade 3 / scales" still saves.
     await fs.writeFile(resolved, JSON.stringify({ ...raw, name }, null, 2), 'utf8');
@@ -171,7 +210,7 @@ app.whenReady().then(() => {
   ipcMain.handle('project:list', async () => {
     const folder = projectsFolder();
     await fs.mkdir(folder, { recursive: true });
-    const files = (await fs.readdir(folder)).filter(name => name.endsWith('.pianotutor.json'));
+    const files = (await fs.readdir(folder)).filter(isProjectFile);
     const projects = await Promise.all(files.map(async name => {
       const filePath = path.join(folder, name);
       const stat = await fs.stat(filePath);
@@ -179,7 +218,7 @@ app.whenReady().then(() => {
       try { data = JSON.parse(await fs.readFile(filePath, 'utf8')); } catch { /* keep the filename fallback */ }
       return {
         filePath,
-        name: data.name || name.replace('.pianotutor.json', ''),
+        name: data.name || stripProjectExtension(name),
         savedAt: data.savedAt || stat.mtime.toISOString(),
         scene: data.scene || 'Default Lesson',
       };

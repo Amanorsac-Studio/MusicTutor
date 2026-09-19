@@ -25,7 +25,9 @@ import {
 } from './formats';
 import { sceneCompositor, secondaryCompositor } from './compositor';
 import { INPUT_SLOTS } from './inputs';
-import { detectChord, romanNumeral } from './chords';
+import { detectChord, noteName, romanNumeral } from './chords';
+import { NoteTracker, decimate, detectPitch, type TrackedNote } from './pitch';
+import { BASS_TUNINGS, likelyPosition, noteDegree, positionsFor, type FretPosition } from './fretboard';
 
 export type StudioValue = {
   settings: AppSettings;
@@ -70,6 +72,10 @@ export type StudioValue = {
   /** Save every scene and preference as a reopenable project file. */
   saveProjectFile: (name: string) => Promise<string | undefined>;
   openProjectFile: (filePath: string) => Promise<void>;
+  /** The note the bass is playing, in bass mode; null when silent or in piano mode. */
+  bassNote: TrackedNote | null;
+  /** Where on the neck that note was most likely played. */
+  bassPosition: FretPosition | null;
   /** The project currently open, if one was opened or saved this session. */
   openProject: { name: string; filePath: string } | null;
   /** Write over the open project. Does nothing when none is open. */
@@ -267,7 +273,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     }
     const path = await desktop.saveProject({
       name,
-      kind: 'pianotutor-project',
+      kind: 'musictutor-project',
       version: 2,
       scenes: scenesRef.current,
       activeSceneId: activeSceneIdRef.current,
@@ -395,6 +401,60 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /*
+   * Bass mode: listen to the chosen input and name the note being played.
+   *
+   * Forty times a second is fast enough to follow a moving line and slow enough
+   * to cost nothing; the real latency is the analysis window, which has to hold
+   * two periods of the lowest string. The window is set in time rather than in
+   * samples so a 96 kHz interface does not halve it.
+   */
+  const [bassNote, setBassNote] = useState<TrackedNote | null>(null);
+  const [bassPosition, setBassPosition] = useState<FretPosition | null>(null);
+  const bassRef = useRef<{ note: TrackedNote | null; position: FretPosition | null }>({ note: null, position: null });
+
+  useEffect(() => {
+    if (settings.instrument !== 'bass') {
+      bassRef.current = { note: null, position: null };
+      setBassNote(null);
+      setBassPosition(null);
+      return;
+    }
+    const tracker = new NoteTracker(2, 3, settings.concertPitch);
+    const tuning = BASS_TUNINGS[settings.bassTuning];
+    let buffer = new Float32Array(new ArrayBuffer(4096 * 4));
+    let lastPosition: FretPosition | null = null;
+
+    const timer = window.setInterval(() => {
+      const rate = audioEngine.context?.sampleRate ?? 48000;
+      let wanted = 1024;
+      while (wanted < rate * 0.085) wanted *= 2;
+      if (buffer.length !== wanted) buffer = new Float32Array(new ArrayBuffer(wanted * 4));
+
+      const heard = audioEngine.readChannelWaveform(settings.bassInputId, buffer);
+      const factor = Math.max(1, Math.round(rate / 12000));
+      const reading = heard ? detectPitch(decimate(buffer, factor), rate / factor) : null;
+      const note = tracker.update(reading);
+
+      const previous = bassRef.current.note;
+      const changed = (note?.midi ?? -1) !== (previous?.midi ?? -1);
+      // The tuning readout moves constantly; only a real change is worth a render.
+      const drifted = note && previous && Math.abs(note.cents - previous.cents) >= 4;
+      if (!changed && !drifted) return;
+
+      let position = bassRef.current.position;
+      if (changed) {
+        position = note ? likelyPosition(positionsFor(note.midi, tuning), lastPosition) : null;
+        if (position) lastPosition = position;
+        setBassPosition(position);
+      }
+      bassRef.current = { note, position };
+      setBassNote(note);
+    }, 25);
+
+    return () => window.clearInterval(timer);
+  }, [settings.instrument, settings.bassInputId, settings.bassTuning, settings.concertPitch]);
+
+  /*
    * Build the audio graph on the first click or key press.
    *
    * A browser will not start an AudioContext without a gesture, and building it
@@ -419,6 +479,26 @@ export function StudioProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const images = new Map<string, CanvasImageSource>();
+
+    /**
+     * What the readouts say. In bass mode the chord readout names the note and
+     * its degree instead, so a scene built for piano works for bass unchanged.
+     */
+    const bassContext = (chordSymbol?: string, chordNumeral?: string) => {
+      const current = settingsRef.current;
+      if (current.instrument !== 'bass') return { chordSymbol, chordNumeral };
+      const { note, position } = bassRef.current;
+      return {
+        chordSymbol: note ? noteName(note.midi, current.accidental) : undefined,
+        chordNumeral: note ? noteDegree(note.midi, current.keyRoot) : undefined,
+        bass: {
+          midi: note?.midi ?? null,
+          position,
+          tuning: current.bassTuning,
+          keyRoot: current.keyRoot,
+        },
+      };
+    };
     sceneCompositor.setProvider(() => {
       const notes = activeNotesRef.current;
       const chord = detectChord(notes, settingsRef.current.accidental);
@@ -431,8 +511,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         context: {
           activeNotes: notes,
           accidental: settingsRef.current.accidental,
-          chordSymbol: chord?.symbol,
-          chordNumeral: numeral ?? undefined,
+          ...bassContext(chord?.symbol, numeral ?? undefined),
           chordQuality: chord?.quality,
           images,
         },
@@ -455,8 +534,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         context: {
           activeNotes: notes,
           accidental: settingsRef.current.accidental,
-          chordSymbol: chord?.symbol,
-          chordNumeral: numeral ?? undefined,
+          ...bassContext(chord?.symbol, numeral ?? undefined),
           chordQuality: chord?.quality,
           images,
         },
@@ -763,6 +841,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     scenes, activeSceneId, activeScene, sources, reorderScene,
     selectScene, addScene, duplicateScene, renameScene, deleteScene,
     setSceneSources, saveProjectFile, openProjectFile, openProject, updateProject, projectDirty,
+    bassNote, bassPosition,
     addSource, updateSource, removeSource, selectedSourceId, setSelectedSourceId,
     activeNotes, noteOn, noteOff, panic,
     recording, elapsedMs, startRecording, stopRecording,
@@ -775,6 +854,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     scenes, activeSceneId, activeScene, sources, reorderScene,
     selectScene, addScene, duplicateScene, renameScene, deleteScene,
     setSceneSources, saveProjectFile, openProjectFile, openProject, updateProject, projectDirty,
+    bassNote, bassPosition,
     addSource, updateSource, removeSource, selectedSourceId,
     activeNotes, noteOn, noteOff, panic,
     recording, elapsedMs, startRecording, stopRecording, notice,

@@ -12,6 +12,8 @@ import { isBlackKey, noteName, octaveOf, pitchClass, type Accidental } from './c
 import { cameraHub } from './cameraHub';
 import { findBackdrop, paintBackdrop } from './backdrops';
 import { drawStaff } from './drawStaff';
+import { drawFretboard } from './drawFretboard';
+import { BASS_TUNINGS, type FretPosition } from './fretboard';
 
 export type RenderContext = {
   /** Notes currently sounding, for the keyboard and chord readout. */
@@ -21,6 +23,8 @@ export type RenderContext = {
   chordSymbol?: string;
   chordNumeral?: string;
   chordQuality?: string;
+  /** The note a bass is playing, when the lesson is about bass. */
+  bass?: { midi: number | null; position: FretPosition | null; tuning: 'four' | 'five'; keyRoot: number };
   /** Images already loaded and ready to draw, keyed by source id. */
   images: Map<string, CanvasImageSource>;
 };
@@ -386,6 +390,20 @@ function drawSource(ctx: CanvasRenderingContext2D, source: Source, context: Rend
         accidental: context.accidental,
         showLabels: props.showLabels ?? 'c-only',
         namePlayed: props.namePlayed !== false,
+      });
+      break;
+    }
+
+    case 'fretboard': {
+      drawFretboard(ctx, { width, height }, {
+        tuning: BASS_TUNINGS[context.bass?.tuning ?? 'four'],
+        midi: context.bass?.midi ?? null,
+        position: context.bass?.position ?? null,
+        keyRoot: context.bass?.keyRoot ?? 0,
+        accidental: context.accidental,
+        accent: props.accent ?? '#ffa629',
+        background: props.background ?? 'rgba(6,16,26,0.78)',
+        showReadout: props.namePlayed !== false,
       });
       break;
     }

@@ -28,7 +28,7 @@ function Brand() {
   return (
     <div className="brand">
       <span className="brand-bars" aria-hidden="true">▮▮▮▮</span>
-      <strong>Piano<span>Tutor</span></strong>
+      <strong>Music<span>Tutor</span></strong>
     </div>
   );
 }

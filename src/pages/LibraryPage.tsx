@@ -264,7 +264,7 @@ export function LibraryPage() {
       ) : (
         <section className="recent-list recording-list">
           <div className="card-title">
-            <div><Clock3 /><span><b>Lesson recordings</b><small>Video and MIDI captures in your PianoTutor folder</small></span></div>
+            <div><Clock3 /><span><b>Lesson recordings</b><small>Video and MIDI captures in your MusicTutor folder</small></span></div>
           </div>
           {recordings.map(recording => (
             <div className="export-row" key={recording.filePath}>

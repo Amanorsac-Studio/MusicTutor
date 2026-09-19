@@ -1,5 +1,5 @@
 /**
- * PianoTutor audio engine.
+ * MusicTutor audio engine.
  *
  * Signal flow:
  *
@@ -118,6 +118,10 @@ type ChannelNodes = {
   gain: GainNode;
   analyser: AnalyserNode;
   buffer: Float32Array;
+  /** A longer, unsmoothed tap for pitch detection, made on first use. */
+  pitchTap?: AnalyserNode;
+  /** Which source that tap is attached to, so a device change re-attaches it. */
+  pitchTapSource?: AudioNode;
 };
 
 export class AudioEngine {
@@ -369,6 +373,36 @@ export class AudioEngine {
     }
     this.announceChannels();
     return { ...state };
+  }
+
+  /**
+   * The raw waveform arriving on a channel, for working out its pitch.
+   *
+   * Taken before the fader on purpose. A teacher may well pull the bass down in
+   * the mix, or mute it while they talk, and the note display should carry on
+   * regardless: what is being listened to is the instrument, not the mix.
+   *
+   * The meter's own analyser cannot be reused. It is a thousand samples long,
+   * and the lowest string of a bass needs four times that to show two periods.
+   * Returns false when the channel has nothing connected.
+   */
+  readChannelWaveform(id: string, out: Float32Array<ArrayBuffer>): boolean {
+    const nodes = this.channels.get(id);
+    const ctx = this.ctx;
+    if (!nodes?.source || !ctx) return false;
+
+    if (!nodes.pitchTap || nodes.pitchTapSource !== nodes.source) {
+      try { nodes.pitchTap?.disconnect(); } catch { /* already detached */ }
+      const tap = ctx.createAnalyser();
+      tap.fftSize = Math.max(32, out.length);
+      tap.smoothingTimeConstant = 0;
+      nodes.source.connect(tap);
+      nodes.pitchTap = tap;
+      nodes.pitchTapSource = nodes.source;
+    }
+    if (nodes.pitchTap.fftSize !== out.length) nodes.pitchTap.fftSize = out.length;
+    nodes.pitchTap.getFloatTimeDomainData(out);
+    return true;
   }
 
   /**

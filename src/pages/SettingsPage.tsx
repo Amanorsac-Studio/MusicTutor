@@ -109,11 +109,11 @@ export function SettingsPage() {
   } else if (active === 'Storage') {
     content = (
       <>
-        {line('Project folder', paths?.projects ?? 'Documents\\PianoTutor\\Projects',
+        {line('Project folder', paths?.projects ?? 'Documents\\MusicTutor\\Projects',
           <button className="subtle-btn" onClick={() => void window.pianoTutorDesktop?.openLibraryFolder('projects')}>
             <FolderOpen />Open
           </button>)}
-        {line('Recording folder', paths?.recordings ?? 'Videos\\PianoTutor',
+        {line('Recording folder', paths?.recordings ?? 'Videos\\MusicTutor',
           <button className="subtle-btn" onClick={() => void window.pianoTutorDesktop?.openLibraryFolder('recordings')}>
             <FolderOpen />Open
           </button>)}

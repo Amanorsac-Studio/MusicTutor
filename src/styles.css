@@ -506,3 +506,9 @@ kbd{min-width:84px;text-align:center;padding:6px 9px;border:1px solid #34495b;bo
    file path, a chat message, or anything they typed — opts back in. */
 .app{user-select:none;-webkit-user-select:none}
 input,textarea,.chat-line,.field-path,.selectable,[contenteditable]{user-select:text;-webkit-user-select:text}
+
+/* Instrument switch and bass settings */
+.instrument-switch{margin-right:6px}
+.instrument-switch button{text-transform:capitalize}
+.bass-bar{margin-top:6px}
+.key-now .cents{font-size:9px;color:#7f93a6;margin-left:7px}

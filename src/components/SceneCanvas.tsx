@@ -18,6 +18,9 @@ import { cameraHub } from '../lib/cameraHub';
 import { findBackdrop } from '../lib/backdrops';
 import type { Accidental } from '../lib/chords';
 import { drawStaff } from '../lib/drawStaff';
+import { drawFretboard } from '../lib/drawFretboard';
+import { BASS_TUNINGS } from '../lib/fretboard';
+import { useStudio } from '../lib/useStudio';
 
 const HANDLES: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
 
@@ -414,6 +417,16 @@ function SourceBody({
         />
       );
 
+    case 'fretboard':
+      return (
+        <FretboardView
+          accidental={accidental}
+          accent={props.accent ?? '#ffa629'}
+          background={props.background ?? 'rgba(6,16,26,0.78)'}
+          showReadout={props.namePlayed !== false}
+        />
+      );
+
     case 'staff':
       return (
         <StaffView
@@ -531,4 +544,43 @@ function CameraView({
       )}
     </div>
   );
+}
+
+/**
+ * The neck preview, drawn with the recording's own renderer.
+ *
+ * It reads the bass note from the studio itself rather than through props, as
+ * the note changes many times a second and threading it through every layer of
+ * the editor would re-render all of them each time.
+ */
+function FretboardView({
+  accidental, accent, background, showReadout,
+}: {
+  accidental: Accidental;
+  accent: string;
+  background: string;
+  showReadout: boolean;
+}) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const { bassNote, bassPosition, settings } = useStudio();
+  const midi = bassNote?.midi ?? null;
+
+  useEffect(() => {
+    const canvas = ref.current;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawFretboard(ctx, { width: canvas.width, height: canvas.height }, {
+      tuning: BASS_TUNINGS[settings.bassTuning],
+      midi,
+      position: bassPosition,
+      keyRoot: settings.keyRoot,
+      accidental,
+      accent,
+      background,
+      showReadout,
+    });
+  }, [midi, bassPosition, settings.bassTuning, settings.keyRoot, accidental, accent, background, showReadout]);
+
+  return <canvas className="source-staff" ref={ref} width={1400} height={336} />;
 }

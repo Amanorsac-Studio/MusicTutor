@@ -38,6 +38,11 @@ export type AppSettings = {
   outputDeviceId: string;
   /** Which MIDI port to listen to; empty means every connected port. */
   midiInputId: string;
+  /** Which instrument the lesson is about, which decides what is listened to. */
+  instrument: 'piano' | 'bass';
+  /** The mixer channel the bass arrives on. */
+  bassInputId: string;
+  bassTuning: 'four' | 'five';
   /** The other shape to compose at the same time, or 'off' for one only. */
   secondaryFormat: 'off' | 'landscape' | 'portrait' | 'square';
   /** Which physical camera fills each teaching role. */
@@ -73,6 +78,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   midiEcho: false,
   outputDeviceId: '',
   midiInputId: '',
+  instrument: 'piano',
+  bassInputId: 'inst1',
+  bassTuning: 'four',
   secondaryFormat: 'off',
   faceCameraId: '',
   handCameraId: '',
@@ -101,6 +109,8 @@ export function normalizeSettings(raw: unknown): AppSettings {
   result.keyRoot = ((Math.round(Number(result.keyRoot)) % 12) + 12) % 12;
   result.computerKeyOctave = Math.min(3, Math.max(-3, Math.round(Number(result.computerKeyOctave)) || 0));
   if (!QUALITY_PRESETS[result.quality]) result.quality = DEFAULT_SETTINGS.quality;
+  if (result.instrument !== 'bass') result.instrument = 'piano';
+  if (result.bassTuning !== 'five') result.bassTuning = 'four';
   // A second format that is not a format, or is the same as the first, is off.
   if (!['off', 'landscape', 'portrait', 'square'].includes(result.secondaryFormat)) {
     result.secondaryFormat = 'off';

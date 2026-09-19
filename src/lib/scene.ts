@@ -21,7 +21,7 @@ export const CANVAS_HEIGHT = 1080;
 
 export const LANDSCAPE_CANVAS: CanvasSize = { width: CANVAS_WIDTH, height: CANVAS_HEIGHT };
 
-export type SourceKind = 'camera' | 'keyboard' | 'staff' | 'text' | 'image' | 'color' | 'chord' | 'backdrop';
+export type SourceKind = 'camera' | 'keyboard' | 'staff' | 'fretboard' | 'text' | 'image' | 'color' | 'chord' | 'backdrop';
 
 /**
  * Cameras are assigned a teaching role rather than a bare device. A face
@@ -171,6 +171,17 @@ function sourceDefaults(kind: SourceKind, canvas: CanvasSize): { name: string; r
           accent: '#ffa629', color: '#0d1420', background: 'rgba(255,255,255,0.94)',
           namePlayed: true, radius: 14,
         },
+      };
+    }
+    case 'fretboard': {
+      // A neck is long and low, so it is sized from the canvas width and sits
+      // along the bottom, where the keyboard would otherwise go.
+      const width = cw - margin * 2;
+      const height = Math.round(Math.min(ch * 0.3, width * 0.24));
+      return {
+        name: 'Bass fretboard',
+        rect: { x: margin, y: ch - margin - height, width, height },
+        props: { accent: '#ffa629', background: 'rgba(6,16,26,0.78)', namePlayed: true, radius: 14 },
       };
     }
     case 'text':
@@ -534,7 +545,7 @@ export function rescaleLayout(sources: Source[], from: CanvasSize, to: CanvasSiz
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
 
-const VALID_KINDS: SourceKind[] = ['camera', 'keyboard', 'staff', 'text', 'image', 'color', 'chord', 'backdrop'];
+const VALID_KINDS: SourceKind[] = ['camera', 'keyboard', 'staff', 'fretboard', 'text', 'image', 'color', 'chord', 'backdrop'];
 
 function normalizeSource(item: unknown): Source | null {
   if (!item || typeof item !== 'object') return null;
