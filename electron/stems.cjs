@@ -192,6 +192,11 @@ class StemSeparator {
     this.session = await ort.InferenceSession.create(this.modelPath, {
       executionProviders: ['cpu'],
       graphOptimizationLevel: 'all',
+      // Left to itself the runtime takes every core, and the app's window then
+      // has nothing left to draw with: it stutters and looks frozen for minutes.
+      // Half the cores is nearly as fast and leaves the lesson usable.
+      intraOpNumThreads: Math.max(1, Math.floor(require('os').cpus().length / 2)),
+      interOpNumThreads: 1,
     });
     this.provider = 'cpu';
     return this.session;

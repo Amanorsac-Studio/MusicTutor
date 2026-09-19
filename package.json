@@ -53,6 +53,11 @@
       "target": "nsis",
       "artifactName": "MusicTutor-Setup-${version}.${ext}",
       "files": [
+        "dist/**/*",
+        "electron/**/*",
+        "package.json",
+        "!**/*.map",
+        "!node_modules/onnxruntime-node/bin/**/linux/**",
         "!node_modules/onnxruntime-node/bin/**/darwin/**",
         "!node_modules/onnxruntime-node/bin/**/win32/arm64/**"
       ]
@@ -71,6 +76,11 @@
     ],
     "mac": {
       "files": [
+        "dist/**/*",
+        "electron/**/*",
+        "package.json",
+        "!**/*.map",
+        "!node_modules/onnxruntime-node/bin/**/linux/**",
         "!node_modules/onnxruntime-node/bin/**/win32/**"
       ]
     }

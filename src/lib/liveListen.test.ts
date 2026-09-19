@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
-import { ChordSmoother, NoteStitcher } from './liveListen';
+import { ChordSmoother } from './liveListen';
 import { chordTemplate } from './chordTrack';
 
 const bassOn = (root: number) => {
@@ -45,43 +45,29 @@ describe('ChordSmoother', () => {
   });
 });
 
-describe('NoteStitcher', () => {
-  const n = (start: number, end: number, midi: number, velocity = 0.6) => ({ start, end, midi, velocity });
-
-  it('counts a note once however many stretches report it', () => {
-    const stitcher = new NoteStitcher();
-    stitcher.add([n(2, 2.5, 60)], 0);
-    stitcher.add([n(1.3, 1.8, 60)], 0.7);
-    expect(stitcher.notes).toHaveLength(1);
-    expect(stitcher.notes[0]).toMatchObject({ start: 2, end: 2.5, midi: 60 });
+describe('ChordSmoother with a known bass note', () => {
+  it('names the slash chord when the bass holds the third', () => {
+    const smoother = new ChordSmoother();
+    let heard = null;
+    // D flat major over F, the way a worship chart writes D♭/F.
+    for (let i = 0; i < 10; i += 1) heard = smoother.push(chordTemplate(1, 'maj'), bassOn(5), true, 41);
+    expect(heard).toEqual({ root: 1, quality: 'maj', bass: 5 });
   });
 
-  it('lengthens a held note instead of striking it again', () => {
-    const stitcher = new NoteStitcher();
-    stitcher.add([n(3, 4, 48)], 0);
-    // The next stretch begins mid-note, so the network reports it from its edge.
-    stitcher.add([n(0, 1.5, 48)], 3.5);
-    expect(stitcher.notes).toHaveLength(1);
-    expect(stitcher.notes[0].end).toBeCloseTo(5, 5);
+  it('lets the bass settle a chord the harmony leaves open', () => {
+    const smoother = new ChordSmoother();
+    // C E G A is C6 or Am7; with A in the bass a player hears Am7.
+    const open = new Float32Array(12);
+    [0, 4, 7, 9].forEach(pc => { open[pc] = 1; });
+    let heard = null;
+    for (let i = 0; i < 10; i += 1) heard = smoother.push(open, bassOn(9), true, 45);
+    expect(heard).toMatchObject({ root: 9, quality: 'm7' });
   });
 
-  it('keeps the same key played twice as two notes', () => {
-    const stitcher = new NoteStitcher();
-    stitcher.add([n(1, 1.4, 60), n(1.5, 1.9, 60)], 0);
-    expect(stitcher.notes).toHaveLength(2);
-  });
-
-  it('ignores the tail of a note from before listening began', () => {
-    const stitcher = new NoteStitcher();
-    stitcher.add([n(0, 0.8, 60)], 0);
-    expect(stitcher.notes).toHaveLength(0);
-  });
-
-  it('forgets what has scrolled away', () => {
-    const stitcher = new NoteStitcher();
-    stitcher.add([n(1, 1.5, 60), n(30, 30.5, 62)], 0);
-    stitcher.prune(10);
-    expect(stitcher.notes.map(note => note.midi)).toEqual([62]);
+  it('follows the bass moving under a held chord without waiting', () => {
+    const smoother = new ChordSmoother();
+    for (let i = 0; i < 10; i += 1) smoother.push(chordTemplate(0, 'maj'), bassOn(0), true, 36);
+    expect(smoother.push(chordTemplate(0, 'maj'), bassOn(4), true, 40)).toEqual({ root: 0, quality: 'maj', bass: 4 });
   });
 });
 

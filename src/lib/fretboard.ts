@@ -44,7 +44,9 @@ export type FretPosition = {
 };
 
 /** Every place a note can be played within the frets drawn. */
-export function positionsFor(midi: number, tuning: BassTuning, frets = FRET_COUNT): FretPosition[] {
+export function positionsFor(
+  midi: number, tuning: Pick<BassTuning, 'strings'>, frets = FRET_COUNT,
+): FretPosition[] {
   const out: FretPosition[] = [];
   tuning.strings.forEach((open, string) => {
     const fret = midi - open;

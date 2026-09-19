@@ -9,6 +9,13 @@
 
 const { StemSeparator } = require('./stems.cjs');
 
+// Background work, and told to behave like it: anything the user is doing
+// in the app, or anywhere else on the computer, goes first.
+try {
+  const os = require('os');
+  os.setPriority(os.constants.priority.PRIORITY_BELOW_NORMAL);
+} catch { /* not allowed here; the thread limit still applies */ }
+
 const port = process.parentPort;
 let separator;
 

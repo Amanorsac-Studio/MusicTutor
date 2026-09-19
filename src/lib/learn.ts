@@ -18,6 +18,44 @@ import { learnPlayer } from './player';
 import { estimateKey, recogniseChords, type ChordSegment } from './chordTrack';
 import { transcribe, type RollNote } from './transcribe';
 import type { StemName } from '../types/desktop';
+import type { ChordRequest, ChordResponse } from './analysisWorker';
+
+let chordWorker: Worker | null = null;
+let chordJob = 0;
+
+/**
+ * Name the chords without holding up the window.
+ *
+ * The samples are copied across rather than handed over: the caller is still
+ * playing them. Where there are no workers at all, as in the tests, the work
+ * is simply done here.
+ */
+function chordsInBackground(
+  samples: Float32Array, sampleRate: number, beats: number[],
+  options: { concertPitch: number; bassSamples?: Float32Array },
+): Promise<ChordSegment[]> {
+  if (typeof Worker === 'undefined') {
+    return Promise.resolve(recogniseChords(samples, sampleRate, beats, options));
+  }
+  chordWorker ??= new Worker(new URL('./analysisWorker.ts', import.meta.url), { type: 'module' });
+  const worker = chordWorker;
+  chordJob += 1;
+  const id = chordJob;
+  return new Promise((resolve, reject) => {
+    const onMessage = (event: MessageEvent<ChordResponse>) => {
+      if (event.data.id !== id) return;
+      worker.removeEventListener('message', onMessage);
+      if (event.data.kind === 'done') resolve(event.data.segments);
+      else reject(new Error(event.data.message));
+    };
+    worker.addEventListener('message', onMessage);
+    const request: ChordRequest = {
+      id, samples, sampleRate, beats,
+      concertPitch: options.concertPitch, bassSamples: options.bassSamples,
+    };
+    worker.postMessage(request);
+  });
+}
 
 export const STEM_NAMES: StemName[] = ['bass', 'piano', 'guitar', 'vocals', 'other', 'drums'];
 
@@ -199,8 +237,7 @@ class LearnSession {
       this.mix = buffer;
 
       this.set({ working: 'Hearing the chords', progress: 0 });
-      await breathe();
-      const chords = recogniseChords(buffer.getChannelData(0), buffer.sampleRate, track.grid.beats, {
+      const chords = await chordsInBackground(buffer.getChannelData(0), buffer.sampleRate, track.grid.beats, {
         concertPitch,
       });
       if (mine !== this.generation) return;
@@ -372,7 +409,7 @@ class LearnSession {
     if (!track || !bass || !harmony.length) return;
     this.set({ working: 'Hearing the chords again, from the bass and the keys', progress: 0 });
     await breathe();
-    const chords = recogniseChords(mixStems(harmony, 1)[0], STEM_RATE, track.grid.beats, {
+    const chords = await chordsInBackground(mixStems(harmony, 1)[0], STEM_RATE, track.grid.beats, {
       concertPitch: this.concertPitch,
       bassSamples: mixStems([bass], 1)[0],
     });

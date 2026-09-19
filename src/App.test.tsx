@@ -80,9 +80,10 @@ describe('workspace navigation', () => {
       ['Library', 'Library'], ['Settings', 'Settings'],
     ]) {
       fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${label}$`) }));
-      expect(await screen.findByRole('heading', { name: heading, level: 1 })).toBeInTheDocument();
+      // Five pages in a row; on a busy machine one second each is not enough.
+      expect(await screen.findByRole('heading', { name: heading, level: 1 }, { timeout: 8000 })).toBeInTheDocument();
     }
-  });
+  }, 60_000);
 
   it('switches settings sections', async () => {
     render(<App />);

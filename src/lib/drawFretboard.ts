@@ -17,8 +17,20 @@ import {
   type BassTuning, type FretPosition,
 } from './fretboard';
 
+/** One dot of a chord shape. */
+export type NeckMark = { string: number; fret: number; label: string; root?: boolean };
+
 export type FretboardOptions = {
-  tuning: BassTuning;
+  /** Any fretted instrument: only the open strings matter to the drawing. */
+  tuning: Pick<BassTuning, 'strings'>;
+  /**
+   * A whole shape to show at once, for a chord. When given, it is drawn in
+   * place of the single note, and `title` is what the readout says.
+   */
+  marks?: NeckMark[];
+  /** Strings the shape leaves out, marked with a cross at the nut. */
+  muted?: number[];
+  title?: string;
   /** The sounding note, or null when nothing is playing. */
   midi: number | null;
   /** Which of its positions to fill in. */
@@ -132,6 +144,38 @@ export function drawFretboard(
   tuning.strings.forEach((open, index) => {
     ctx.fillText(noteName(open, options.accidental), neckLeft - openRoom * 0.95 + pad * 0.5, stringY(index));
   });
+
+  if (options.marks) {
+    const radius = Math.min(neckHeight / strings * 0.42, neckWidth / frets * 0.4);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    options.marks.forEach(mark => {
+      const x = mark.fret === 0
+        ? neckLeft - openRoom * 0.42
+        : neckLeft + neckWidth * fretCentre(mark.fret, frets);
+      const y = stringY(mark.string);
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      // The root is filled solid so the eye finds the chord's name in the shape.
+      ctx.fillStyle = mark.root ? options.accent : '#e8eef5';
+      ctx.fill();
+      ctx.fillStyle = '#10151c';
+      ctx.font = `800 ${radius * (mark.label.length > 2 ? 0.8 : 1.02)}px Inter, system-ui, sans-serif`;
+      ctx.fillText(mark.label, x, y + radius * 0.05);
+    });
+    ctx.fillStyle = '#ff8a8f';
+    ctx.font = `800 ${radius * 1.2}px Inter, system-ui, sans-serif`;
+    (options.muted ?? []).forEach(string => {
+      ctx.fillText('×', neckLeft - openRoom * 0.42, stringY(string));
+    });
+    if (options.showReadout && options.title) {
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `800 ${readout * 0.8}px Inter, system-ui, sans-serif`;
+      ctx.fillText(options.title, pad, readout * 0.55);
+    }
+    return;
+  }
 
   if (options.midi === null) return;
 

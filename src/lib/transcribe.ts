@@ -235,44 +235,6 @@ function loadRuntime(): Promise<Runtime> {
 }
 
 /**
- * Load the network and run it once on nothing.
- *
- * The first run compiles everything for the graphics card and takes seconds.
- * Done while the user is still reaching for the play button, it costs nothing;
- * done on the first real notes, those notes are lost.
- */
-export async function warmUp(): Promise<void> {
-  const { pitch } = await loadRuntime();
-  await pitch.evaluateModel(new Float32Array(MODEL_RATE * 2), () => { /* nothing to keep */ }, () => { /* nor to report */ });
-}
-
-/**
- * Transcribe a short stretch of sound that is already mono at MODEL_RATE.
- *
- * For live listening, where the audio arrives a few seconds at a time. Times
- * are from the start of the stretch. Nothing is tidied: the caller is stitching
- * stretches together and needs the raw notes to do it.
- */
-export async function transcribeChunk(
-  audio: Float32Array,
-): Promise<Array<{ start: number; end: number; midi: number; velocity: number }>> {
-  const { pitch, tools } = await loadRuntime();
-  const frames: number[][] = [];
-  const onsets: number[][] = [];
-  await pitch.evaluateModel(
-    audio,
-    (f, o) => { frames.push(...f); onsets.push(...o); },
-    () => { /* too short to be worth reporting */ },
-  );
-  return tools.noteFramesToTime(tools.outputToNotesPoly(frames, onsets, 0.5, 0.3, 5)).map(event => ({
-    start: event.startTimeSeconds,
-    end: event.startTimeSeconds + event.durationSeconds,
-    midi: Math.round(event.pitchMidi),
-    velocity: event.amplitude,
-  }));
-}
-
-/**
  * Transcribe a recording into notes.
  *
  * Progress runs from 0 to 1. The network works through the audio in chunks and

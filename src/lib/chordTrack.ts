@@ -29,12 +29,14 @@ import { noteName, type Accidental } from './chords';
 /** Analysis window. Long, because telling semitones apart low down needs it. */
 export const CHROMA_WINDOW = 8192;
 export const CHROMA_HOP = 2048;
+/** Window for the bass's own, slowed-down transform. A third of a second. */
+const BASS_WINDOW = 4096;
 
 /** The band the harmony is read from, and the band the bass is read from. */
 export const HARMONY_BAND: [number, number] = [130, 2100];
 export const BASS_BAND: [number, number] = [60, 262];
 
-export type ChordQuality = 'maj' | 'min' | '7' | 'maj7' | 'm7';
+export type ChordQuality = 'maj' | 'min' | '7' | 'maj7' | 'm7' | 'sus' | '2' | 'dim';
 
 /** Intervals above the root, in semitones, for each kind of chord listened for. */
 export const CHORD_SHAPES: Record<ChordQuality, number[]> = {
@@ -43,10 +45,26 @@ export const CHORD_SHAPES: Record<ChordQuality, number[]> = {
   7: [0, 4, 7, 10],
   maj7: [0, 4, 7, 11],
   m7: [0, 3, 7, 10],
+  // The three below are what a working chord chart is full of and a list of
+  // plain triads cannot say: the held fourth, the added second, the diminished.
+  sus: [0, 5, 7],
+  2: [0, 2, 4, 7],
+  dim: [0, 3, 6],
 };
 
 const QUALITY_SUFFIX: Record<ChordQuality, string> = {
-  maj: '', min: 'm', 7: '7', maj7: 'maj7', m7: 'm7',
+  maj: '', min: 'm', 7: '7', maj7: 'maj7', m7: 'm7', sus: 'sus', 2: '2', dim: 'dim',
+};
+
+/**
+ * What each kind of chord has to overcome to be named.
+ *
+ * A plain triad is the default. Anything richer is only named when its extra
+ * note is really there, since calling every C a C2 because the tune brushed a
+ * D is the commonest way these systems annoy musicians.
+ */
+const RELUCTANCE: Record<ChordQuality, number> = {
+  maj: 0, min: 0, 7: 0.035, maj7: 0.035, m7: 0.035, sus: 0.07, 2: 0.16, dim: 0.06,
 };
 
 export type ChordSegment = {
@@ -55,15 +73,36 @@ export type ChordSegment = {
   /** Pitch class of the root, or -1 where no chord was heard. */
   root: number;
   quality: ChordQuality | null;
+  /**
+   * The bass note's pitch class, when the bass is holding a chord note other
+   * than the root: the F in D♭/F. Absent when the bass is on the root.
+   */
+  bass?: number;
 };
 
 /** A chord's name, in the spelling the rest of the app is using. */
 export function chordLabel(
-  segment: Pick<ChordSegment, 'root' | 'quality'>, accidental: Accidental, transpose = 0,
+  segment: Pick<ChordSegment, 'root' | 'quality' | 'bass'>, accidental: Accidental, transpose = 0,
 ): string {
   if (segment.root < 0 || !segment.quality) return '—';
-  const root = ((segment.root + transpose) % 12 + 12) % 12;
-  return noteName(60 + root, accidental) + QUALITY_SUFFIX[segment.quality];
+  const shift = (pc: number) => ((pc + transpose) % 12 + 12) % 12;
+  const name = noteName(60 + shift(segment.root), accidental) + QUALITY_SUFFIX[segment.quality];
+  return segment.bass === undefined || segment.bass === segment.root
+    ? name
+    : `${name}/${noteName(60 + shift(segment.bass), accidental)}`;
+}
+
+/**
+ * Whether a key is written in flats.
+ *
+ * A song in D♭ has a G♭ chord in it, not an F♯. Spelling follows the key, as
+ * every printed chart does; one fixed choice for the whole app would make half
+ * of all songs read wrongly.
+ */
+export function keyPrefersFlats(key: { root: number; mode: 'major' | 'minor' }): boolean {
+  const major = key.mode === 'minor' ? (key.root + 3) % 12 : key.root;
+  // F, B♭, E♭, A♭, D♭, G♭ and their relative minors.
+  return [5, 10, 3, 8, 1, 6].includes(major);
 }
 
 /**
@@ -129,13 +168,33 @@ export function chromagram(
   const fft = new FFT(CHROMA_WINDOW);
   const window = hann(CHROMA_WINDOW);
   const harmonyMap = binMap(sampleRate, CHROMA_WINDOW, HARMONY_BAND, concertPitch);
-  const bassMap = binMap(sampleRate, CHROMA_WINDOW, BASS_BAND, concertPitch);
   const frames = Math.max(0, Math.floor((samples.length - CHROMA_WINDOW) / CHROMA_HOP) + 1);
 
   const harmony: Float32Array[] = [];
   const bass: Float32Array[] = [];
   const energy = new Float32Array(frames);
   const magnitudes = new Float64Array(CHROMA_WINDOW / 2);
+
+  /*
+   * The bass gets a second, finer listen. At the bottom of a bass guitar two
+   * neighbouring notes are under five hertz apart, which is about one bin of
+   * the transform above: it cannot tell an E from an F down there, and the
+   * root of the chord is exactly what is down there. Slowing the signal down
+   * four times and transforming that gives four times the resolution where it
+   * is needed, for almost no extra work.
+   */
+  const slow = Math.max(1, Math.round(sampleRate / 11025));
+  const lowRate = sampleRate / slow;
+  const low = new Float32Array(Math.floor(samples.length / slow));
+  for (let i = 0; i < low.length; i += 1) {
+    let sum = 0;
+    for (let k = 0; k < slow; k += 1) sum += samples[i * slow + k];
+    low[i] = sum / slow;
+  }
+  const lowFft = new FFT(BASS_WINDOW);
+  const lowWindow = hann(BASS_WINDOW);
+  const lowMap = binMap(lowRate, BASS_WINDOW, BASS_BAND, concertPitch);
+  const lowMagnitudes = new Float64Array(BASS_WINDOW / 2);
 
   for (let frame = 0; frame < frames; frame += 1) {
     fft.magnitudes(samples, frame * CHROMA_HOP, window, magnitudes);
@@ -149,8 +208,11 @@ export function chromagram(
       h[pitchClass] += value;
       total += magnitudes[bin];
     });
-    bassMap.forEach(({ bin, pitchClass, weight }) => {
-      b[pitchClass] += Math.sqrt(magnitudes[bin]) * weight;
+    // Centred on the same moment as the frame above, so the two line up.
+    const centre = frame * CHROMA_HOP + CHROMA_WINDOW / 2;
+    lowFft.magnitudes(low, Math.round(centre / slow) - BASS_WINDOW / 2, lowWindow, lowMagnitudes);
+    lowMap.forEach(({ bin, pitchClass, weight }) => {
+      b[pitchClass] += Math.sqrt(lowMagnitudes[bin]) * weight;
     });
     harmony.push(h);
     bass.push(b);
@@ -227,9 +289,14 @@ export function scoreFrame(harmony: Float32Array, bass: Float32Array, bassWeight
     let dot = 0;
     for (let i = 0; i < 12; i += 1) dot += harmony[i] * chord.template[i];
     const similarity = dot / norm;
-    const rootInBass = bassNormal[chord.root];
-    const complexity = CHORD_SHAPES[chord.quality].length > 3 ? 0.035 : 0;
-    scores[index] = similarity + bassWeight * rootInBass - complexity;
+    // Mostly the root, but bass players walk: a fifth or a third underneath is
+    // still this chord, and giving it no credit hands the beat to whichever
+    // chord happens to be rooted on the passing note.
+    const shape = CHORD_SHAPES[chord.quality];
+    const rootInBass = bassNormal[chord.root]
+      + 0.45 * bassNormal[(chord.root + shape[2]) % 12]
+      + 0.3 * bassNormal[(chord.root + shape[1]) % 12];
+    scores[index] = similarity + bassWeight * rootInBass - RELUCTANCE[chord.quality];
   });
   return scores;
 }
@@ -259,10 +326,10 @@ export const PITCHED_THRESHOLD = 1.7;
  * harmony to name. For live listening, where there is no song to look ahead in.
  */
 export function bestChord(
-  harmony: Float32Array, bass: Float32Array,
+  harmony: Float32Array, bass: Float32Array, bassWeight = 0.16,
 ): { root: number; quality: ChordQuality } | null {
   if (peakiness(harmony) < PITCHED_THRESHOLD) return null;
-  const scores = scoreFrame(harmony, bass);
+  const scores = scoreFrame(harmony, bass, bassWeight);
   let best = -1;
   for (let i = 0; i < scores.length; i += 1) {
     if (best < 0 || scores[i] > scores[best]) best = i;
@@ -325,9 +392,15 @@ function refineBoundaries(
     let bestSplit = 0;
     let bestScore = total;
     let running = total;
+    // A split has to earn its distance from the beat. Where the two chords
+    // share most of their notes the evidence is nearly flat, and without this
+    // the boundary slides to the edge of the search for no musical reason.
+    const away = (k: number) => Math.abs(centre(lo + k) - before.end) * 0.6;
+    bestScore = total - away(0);
     for (let k = 1; k <= gain.length; k += 1) {
       running -= gain[k - 1];
-      if (running > bestScore + 1e-6) { bestScore = running; bestSplit = k; }
+      const value = running - away(k);
+      if (value > bestScore + 1e-6) { bestScore = value; bestSplit = k; }
     }
     // The window reaches forward of its centre, so the attack of the new chord
     // is heard by frames stamped a little before it. Lean early, never late.
@@ -395,6 +468,8 @@ export type ChordOptions = {
    * through the drums and the singer, is the largest single gain there is.
    */
   bassSamples?: Float32Array;
+  /** Lean toward chords in the song's key on a second pass. On unless false. */
+  keyPrior?: boolean;
   /** How reluctant the result is to change chord. Higher is steadier. */
   stickiness?: number;
   onProgress?: (fraction: number) => void;
@@ -469,43 +544,85 @@ export function recogniseChords(
    */
   const stickiness = options.stickiness ?? 0.085;
   const states = VOCABULARY.length;
-  let best = new Float32Array(states);
-  const back: Int32Array[] = [];
-
-  slices.forEach((slice, index) => {
-    const next = new Float32Array(states);
-    const from = new Int32Array(states);
-    let leader = 0;
-    for (let s = 1; s < states; s += 1) if (best[s] > best[leader]) leader = s;
-    for (let s = 0; s < states; s += 1) {
-      const stay = best[s];
-      const move = best[leader] - stickiness;
-      const arrive = index === 0 ? 0 : Math.max(stay, move);
-      from[s] = index === 0 || stay >= move ? s : leader;
-      // A silent slice gives no evidence, so the path simply carries through it.
-      next[s] = arrive + (slice.scores ? slice.scores[s] : 0);
+  const bestPath = (favour: Float32Array | null): Int32Array => {
+    let best = new Float32Array(states);
+    const back: Int32Array[] = [];
+    slices.forEach((slice, index) => {
+      const next = new Float32Array(states);
+      const fromState = new Int32Array(states);
+      let leader = 0;
+      for (let s = 1; s < states; s += 1) if (best[s] > best[leader]) leader = s;
+      for (let s = 0; s < states; s += 1) {
+        const stay = best[s];
+        const move = best[leader] - stickiness;
+        const arrive = index === 0 ? 0 : Math.max(stay, move);
+        fromState[s] = index === 0 || stay >= move ? s : leader;
+        // A silent slice gives no evidence, so the path simply carries through it.
+        next[s] = arrive + (slice.scores ? slice.scores[s] + (favour ? favour[s] : 0) : 0);
+      }
+      best = next;
+      back.push(fromState);
+    });
+    let state = 0;
+    for (let s = 1; s < states; s += 1) if (best[s] > best[state]) state = s;
+    const path = new Int32Array(slices.length);
+    for (let index = slices.length - 1; index >= 0; index -= 1) {
+      path[index] = state;
+      state = back[index][state];
     }
-    best = next;
-    back.push(from);
-  });
-
-  let state = 0;
-  for (let s = 1; s < states; s += 1) if (best[s] > best[state]) state = s;
-  const path = new Int32Array(slices.length);
-  for (let index = slices.length - 1; index >= 0; index -= 1) {
-    path[index] = state;
-    state = back[index][state];
-  }
+    return path;
+  };
 
   // Join runs of the same chord, leaving silence as silence.
-  const segments: ChordSegment[] = [];
-  slices.forEach((slice, index) => {
-    const chord = slice.scores ? VOCABULARY[path[index]] : null;
-    const root = chord ? chord.root : -1;
-    const quality = chord ? chord.quality : null;
-    const last = segments[segments.length - 1];
-    if (last && last.root === root && last.quality === quality) last.end = slice.end;
-    else segments.push({ start: slice.start, end: slice.end, root, quality });
+  const join = (path: Int32Array): ChordSegment[] => {
+    const joined: ChordSegment[] = [];
+    slices.forEach((slice, index) => {
+      const chord = slice.scores ? VOCABULARY[path[index]] : null;
+      const root = chord ? chord.root : -1;
+      const quality = chord ? chord.quality : null;
+      const last = joined[joined.length - 1];
+      if (last && last.root === root && last.quality === quality) last.end = slice.end;
+      else joined.push({ start: slice.start, end: slice.end, root, quality });
+    });
+    return joined;
+  };
+
+  /*
+   * Twice through. The first pass finds the key; the second leans, gently,
+   * toward chords that belong in it. A listener does the same: in a song in G,
+   * an ambiguous moment is far more likely to be Em than E♭. The lean is small
+   * enough that a chord from outside the key still wins when it is really there.
+   */
+  let segments = join(bestPath(null));
+  if (options.keyPrior !== false && segments.some(segment => segment.root >= 0)) {
+    const key = estimateKey(segments);
+    const home = key.mode === 'minor' ? (key.root + 3) % 12 : key.root;
+    const majors = [0, 5, 7].map(step => (home + step) % 12);
+    const minors = [2, 4, 9].map(step => (home + step) % 12);
+    // The major chord on the fifth of a minor key is what makes it sound minor.
+    if (key.mode === 'minor') majors.push((key.root + 7) % 12);
+    const favour = new Float32Array(states);
+    VOCABULARY.forEach((chord, index) => {
+      const minorKind = chord.quality === 'min' || chord.quality === 'm7';
+      const majorKind = !minorKind && chord.quality !== 'dim';
+      if ((majorKind && majors.includes(chord.root)) || (minorKind && minors.includes(chord.root))) {
+        favour[index] = 0.03;
+      }
+    });
+    segments = join(bestPath(favour));
+  }
+
+  // Where the bass sits on a chord note that is not the root, say so: D♭/F.
+  segments.forEach(segment => {
+    if (segment.root < 0 || !segment.quality) return;
+    const [first, last] = frameRange(chroma, chroma.energy.length, segment.start, segment.end);
+    const low = averageBetween(bassRows, first, last);
+    let top = 0;
+    for (let pc = 1; pc < 12; pc += 1) if (low[pc] > low[top]) top = pc;
+    const interval = (top - segment.root + 12) % 12;
+    const inChord = CHORD_SHAPES[segment.quality].includes(interval);
+    // Clearly the bass, not a near tie with the root underneath it.
+    if (interval !== 0 && inChord && low[top] > low[segment.root] * 1.7) segment.bass = top;
   });
   refineBoundaries(segments, chroma, bassRows, bassWeight);
   return segments;
