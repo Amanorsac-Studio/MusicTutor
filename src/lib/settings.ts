@@ -45,6 +45,8 @@ export type AppSettings = {
   bassTuning: 'four' | 'five';
   /** How much of the neck is shown and searched for positions. */
   bassFrets: number;
+  /** Which device feeds each mixer input, by slot id, so it survives a restart. */
+  inputDevices: Record<string, string>;
   /** The other shape to compose at the same time, or 'off' for one only. */
   secondaryFormat: 'off' | 'landscape' | 'portrait' | 'square';
   /** Which physical camera fills each teaching role. */
@@ -84,6 +86,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   bassInputId: 'inst1',
   bassTuning: 'four',
   bassFrets: 12,
+  inputDevices: {},
   secondaryFormat: 'off',
   faceCameraId: '',
   handCameraId: '',
@@ -112,6 +115,11 @@ export function normalizeSettings(raw: unknown): AppSettings {
   result.keyRoot = ((Math.round(Number(result.keyRoot)) % 12) + 12) % 12;
   result.computerKeyOctave = Math.min(3, Math.max(-3, Math.round(Number(result.computerKeyOctave)) || 0));
   if (!QUALITY_PRESETS[result.quality]) result.quality = DEFAULT_SETTINGS.quality;
+  // Only plain slot-to-device pairs; anything else in there is discarded.
+  result.inputDevices = Object.fromEntries(
+    Object.entries(result.inputDevices && typeof result.inputDevices === 'object' ? result.inputDevices : {})
+      .filter(([slot, device]) => typeof slot === 'string' && typeof device === 'string' && device),
+  ) as Record<string, string>;
   if (result.instrument !== 'bass') result.instrument = 'piano';
   if (result.bassTuning !== 'five') result.bassTuning = 'four';
   result.bassFrets = Math.max(5, Math.min(24, Math.round(Number(result.bassFrets)) || 12));

@@ -695,6 +695,14 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     const state = await audioEngine.addInputChannel(options);
     syncChannels();
     if (state.error) setNotice(`${options.label}: ${state.error}`);
+    // Remembered, so the bass is still on its input tomorrow. Only a device that
+    // actually opened is worth remembering.
+    else if (options.deviceId) {
+      setSettings(current => ({
+        ...current,
+        inputDevices: { ...current.inputDevices, [options.id]: options.deviceId as string },
+      }));
+    }
     return state;
   }, [syncChannels]);
 
@@ -703,7 +711,38 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     if (INPUT_SLOTS.some(slot => slot.id === id)) audioEngine.clearChannelDevice(id);
     else audioEngine.removeChannel(id);
     syncChannels();
+    setSettings(current => {
+      if (!(id in current.inputDevices)) return current;
+      const { [id]: _removed, ...rest } = current.inputDevices;
+      return { ...current, inputDevices: rest };
+    });
   }, [syncChannels]);
+
+  /*
+   * Put every input back where it was last time.
+   *
+   * Without this a teacher re-picks their microphone and their bass on every
+   * launch. It runs once, after the saved settings have arrived, and only for
+   * devices that are still plugged in: a missing interface is left unassigned
+   * rather than reported as an error on every start.
+   */
+  const inputsRestored = useRef(false);
+  useEffect(() => {
+    if (!settingsLoaded || inputsRestored.current) return;
+    const wanted = Object.entries(settingsRef.current.inputDevices);
+    if (!wanted.length) { inputsRestored.current = true; return; }
+    // Device names are hidden until access is granted, but ids are not, and an
+    // id is all that is needed to tell whether a device is still there.
+    if (!catalog.audioInputs.length) return;
+    inputsRestored.current = true;
+    wanted.forEach(([slotId, deviceId]) => {
+      const slot = INPUT_SLOTS.find(item => item.id === slotId);
+      if (!slot || !catalog.audioInputs.some(device => device.id === deviceId)) return;
+      void audioEngine.addInputChannel({
+        id: slot.id, label: slot.label, deviceId, isVoice: slot.isVoice,
+      }).then(syncChannels);
+    });
+  }, [settingsLoaded, catalog.audioInputs, syncChannels]);
 
   const setChannelGain = useCallback((id: string, value: number) => {
     audioEngine.setChannelGain(id, value);

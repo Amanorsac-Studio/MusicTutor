@@ -76,3 +76,41 @@ describe('byte formatting', () => {
     expect(formatBytes(1_600_000, 'en-US')).toContain('.');
   });
 });
+
+describe('remembered inputs', () => {
+  it('starts with nothing assigned', () => {
+    expect(DEFAULT_SETTINGS.inputDevices).toEqual({});
+  });
+
+  it('keeps which device feeds which input across a restart', () => {
+    const result = normalizeSettings({ inputDevices: { inst1: 'device-abc', mic1: 'device-xyz' } });
+    expect(result.inputDevices).toEqual({ inst1: 'device-abc', mic1: 'device-xyz' });
+  });
+
+  it('throws away anything that is not a slot paired with a device', () => {
+    const result = normalizeSettings({ inputDevices: { inst1: 'ok', mic1: 42, mic2: '', inst2: null } });
+    expect(result.inputDevices).toEqual({ inst1: 'ok' });
+  });
+
+  it('survives the field being the wrong shape entirely', () => {
+    expect(normalizeSettings({ inputDevices: 'nonsense' }).inputDevices).toEqual({});
+    expect(normalizeSettings({ inputDevices: null }).inputDevices).toEqual({});
+  });
+});
+
+describe('bass settings', () => {
+  it('defaults to piano, four strings and twelve frets', () => {
+    expect(DEFAULT_SETTINGS.instrument).toBe('piano');
+    expect(DEFAULT_SETTINGS.bassTuning).toBe('four');
+    expect(DEFAULT_SETTINGS.bassFrets).toBe(12);
+  });
+
+  it('holds the fret count to something a real bass has', () => {
+    expect(normalizeSettings({ bassFrets: 99 }).bassFrets).toBe(24);
+    expect(normalizeSettings({ bassFrets: 1 }).bassFrets).toBe(5);
+  });
+
+  it('falls back to piano for an instrument it does not know', () => {
+    expect(normalizeSettings({ instrument: 'kazoo' }).instrument).toBe('piano');
+  });
+});
