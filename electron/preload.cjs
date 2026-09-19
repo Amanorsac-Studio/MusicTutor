@@ -22,6 +22,16 @@ contextBridge.exposeInMainWorld('pianoTutorDesktop', {
   openExternal: (url) => ipcRenderer.invoke('external:open', url),
   scanPlugins: () => ipcRenderer.invoke('plugins:scan'),
   launchPlugin: (target) => ipcRenderer.invoke('plugins:launch', target),
+  stemStatus: () => ipcRenderer.invoke('stems:status'),
+  stemDownload: () => ipcRenderer.invoke('stems:download'),
+  stemSeparate: (left, right) => ipcRenderer.invoke('stems:separate', left, right),
+  stemCancel: () => ipcRenderer.invoke('stems:cancel'),
+  stemRead: (id, stem) => ipcRenderer.invoke('stems:read', id, stem),
+  onStemProgress: (handler) => {
+    const listener = (_event, progress) => handler(progress);
+    ipcRenderer.on('stems:progress', listener);
+    return () => ipcRenderer.removeListener('stems:progress', listener);
+  },
   streamAvailable: () => ipcRenderer.invoke('stream:available'),
   streamStart: (targets, options) => ipcRenderer.invoke('stream:start', targets, options),
   // `output` names which shape's encoder to act on: 'primary' or 'secondary'.

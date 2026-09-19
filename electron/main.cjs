@@ -1,8 +1,9 @@
-const { app, BrowserWindow, ipcMain, session, desktopCapturer, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, session, desktopCapturer, shell, utilityProcess } = require('electron');
 const fs = require('fs/promises');
 const path = require('path');
 const { Streamer, ffmpegPath } = require('./streamer.cjs');
 const { scanPlugins, launchPlugin } = require('./plugins.cjs');
+const { StemSeparator, STEMS } = require('./stems.cjs');
 
 /** The last scan, so a launch can only ever start something we found. */
 let knownPlugins = [];
@@ -11,6 +12,9 @@ let knownPlugins = [];
 const streamers = {};
 
 let mainWindow;
+
+/** Stops the separation process on quit. Set once the app is ready. */
+let stopStemWorker;
 
 const projectsFolder = () => path.join(app.getPath('documents'), 'MusicTutor', 'Projects');
 const recordingsFolder = () => path.join(app.getPath('videos'), 'MusicTutor');
@@ -88,6 +92,8 @@ function createWindow() {
       backgroundThrottling: false,
       contextIsolation: true,
       nodeIntegration: false,
+      // For the YouTube browser in the Learn tab. Locked down below.
+      webviewTag: true,
     },
   });
 
@@ -136,6 +142,43 @@ app.whenReady().then(() => {
       callback({});
     }
   }, { useSystemPicker: false });
+
+  /**
+   * The embedded browser.
+   *
+   * It shows somebody else's web pages inside the app, so it gets nothing of
+   * the app's: no preload, no Node, its own storage, and no permissions at all.
+   * It may only be pointed at YouTube and the Google pages YouTube sends people
+   * through to sign in or accept cookies, and it cannot open windows.
+   */
+  const browsable = url => {
+    try {
+      const { protocol, hostname } = new URL(url);
+      return protocol === 'https:' && /(^|\.)(youtube\.com|youtu\.be|google\.com|youtube-nocookie\.com)$/.test(hostname);
+    } catch { return false; }
+  };
+  app.on('web-contents-created', (_event, contents) => {
+    contents.on('will-attach-webview', (event, webPreferences, params) => {
+      delete webPreferences.preload;
+      webPreferences.nodeIntegration = false;
+      webPreferences.contextIsolation = true;
+      webPreferences.sandbox = true;
+      params.partition = 'persist:learn-youtube';
+      if (!browsable(params.src)) event.preventDefault();
+    });
+    if (contents.getType() === 'webview') {
+      contents.setWindowOpenHandler(({ url }) => {
+        // A link that wants a new window opens in place instead.
+        if (browsable(url)) void contents.loadURL(url);
+        return { action: 'deny' };
+      });
+      contents.on('will-navigate', (event, url) => { if (!browsable(url)) event.preventDefault(); });
+    }
+  });
+  const tube = session.fromPartition('persist:learn-youtube');
+  // Fullscreen is the one thing a video player reasonably asks for.
+  tube.setPermissionRequestHandler((_wc, permission, callback) => callback(permission === 'fullscreen'));
+  tube.setPermissionCheckHandler((_wc, permission) => permission === 'fullscreen');
 
   ipcMain.on('window:minimize', () => mainWindow?.minimize());
   ipcMain.on('window:maximize', () => (mainWindow?.isMaximized() ? mainWindow.unmaximize() : mainWindow?.maximize()));
@@ -296,6 +339,70 @@ app.whenReady().then(() => {
   // Chunks arrive frequently, so this is a one-way send rather than an invoke.
   ipcMain.on('stream:chunk', (_event, bytes, output) => { streamerFor(output).write(bytes); });
 
+  /* ---------------------------------------------------------------- *
+   * Stem separation
+   * ---------------------------------------------------------------- */
+
+  // Only ever used here to answer questions about files on disk. The network
+  // itself is opened in the worker process, never in this one.
+  const stemFiles = new StemSeparator(app.getPath('userData'));
+  let stemWorker = null;
+  let stemJob = 0;
+  const stemJobs = new Map();
+
+  const startStemWorker = () => {
+    if (stemWorker) return stemWorker;
+    const worker = utilityProcess.fork(path.join(__dirname, 'stemWorker.cjs'), [], { serviceName: 'MusicTutor stems' });
+    worker.on('message', message => {
+      if (message.type === 'progress') {
+        mainWindow?.webContents.send('stems:progress', { stage: message.stage, fraction: message.fraction });
+        return;
+      }
+      const waiting = stemJobs.get(message.job);
+      if (!waiting) return;
+      stemJobs.delete(message.job);
+      if (message.type === 'done') waiting.resolve(message.result);
+      else waiting.reject(new Error(message.message || 'Separation failed.'));
+    });
+    worker.on('exit', () => {
+      if (stemWorker === worker) stemWorker = null;
+      stemJobs.forEach(({ reject }) => reject(new Error('The separation engine stopped unexpectedly. Try again.')));
+      stemJobs.clear();
+    });
+    worker.postMessage({ type: 'init', dataFolder: app.getPath('userData') });
+    stemWorker = worker;
+    return worker;
+  };
+  stopStemWorker = () => stemWorker?.kill();
+
+  const askStemWorker = message => new Promise((resolve, reject) => {
+    stemJob += 1;
+    stemJobs.set(stemJob, { resolve, reject });
+    startStemWorker().postMessage({ ...message, job: stemJob });
+  });
+
+  ipcMain.handle('stems:status', async () => ({ ...stemFiles.status(), busy: stemJobs.size > 0 }));
+  ipcMain.handle('stems:download', async () => {
+    await askStemWorker({ type: 'download' });
+    return true;
+  });
+  ipcMain.handle('stems:separate', async (_event, left, right) => {
+    if (!(left instanceof ArrayBuffer) || !(right instanceof ArrayBuffer) || left.byteLength !== right.byteLength) {
+      throw new Error('Separation needs two channels of the same length.');
+    }
+    if (stemJobs.size) throw new Error('A song is already being separated.');
+    const result = await askStemWorker({ type: 'separate', left, right });
+    return { id: result.id, cached: result.cached, stems: STEMS };
+  });
+  ipcMain.handle('stems:cancel', async () => { stemWorker?.postMessage({ type: 'cancel' }); });
+  // The renderer names a song by its fingerprint and a stem by name; the path
+  // is built here, so it can never be pointed at anything else on the disk.
+  ipcMain.handle('stems:read', async (_event, id, stem) => {
+    if (!/^[0-9a-f]{20}$/.test(String(id)) || !STEMS.includes(stem)) throw new Error('No such stem.');
+    const bytes = await fs.readFile(stemFiles.cacheFor(id).files[stem]);
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  });
+
   ipcMain.handle('settings:load', async () => {
     try {
       return JSON.parse(await fs.readFile(path.join(app.getPath('userData'), 'settings.json'), 'utf8'));
@@ -315,6 +422,8 @@ app.whenReady().then(() => {
 });
 
 app.on('before-quit', () => {
+  // A worker left running would hold the app open.
+  try { stopStemWorker?.(); } catch { /* already gone */ }
   Object.values(streamers).forEach(item => { try { item.stop(); } catch { /* already gone */ } });
 });
 

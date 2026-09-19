@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  Circle, Library, Maximize2, Minus, MonitorPlay, Settings as SettingsIcon,
+  Circle, GraduationCap, Library, Maximize2, Minus, MonitorPlay, Settings as SettingsIcon,
   Radio, SlidersHorizontal, Upload, Wifi, X,
 } from 'lucide-react';
 import { StudioProvider, useStudio } from './lib/useStudio';
@@ -10,13 +10,15 @@ import { Mixer } from './pages/Mixer';
 import { LibraryPage } from './pages/LibraryPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { StreamPage } from './pages/StreamPage';
-import { trackPlayer } from './lib/player';
+import { LearnPage } from './pages/LearnPage';
+import { learnPlayer, trackPlayer } from './lib/player';
 import { formatDuration } from './lib/settings';
 
-type Workspace = 'Studio' | 'Devices' | 'Mixer' | 'Stream' | 'Library' | 'Settings';
+type Workspace = 'Studio' | 'Learn' | 'Devices' | 'Mixer' | 'Stream' | 'Library' | 'Settings';
 
 const WORKSPACES: Array<{ id: Workspace; label: string; Icon: typeof MonitorPlay }> = [
   { id: 'Studio', label: 'Tutorial', Icon: MonitorPlay },
+  { id: 'Learn', label: 'Learn', Icon: GraduationCap },
   { id: 'Devices', label: 'Devices', Icon: Wifi },
   { id: 'Mixer', label: 'Mixer', Icon: SlidersHorizontal },
   { id: 'Stream', label: 'Stream', Icon: Radio },
@@ -62,10 +64,13 @@ function Shell() {
         // and re-triggers whichever button was last clicked.
         if (event.code === 'Space' && !event.ctrlKey && !event.metaKey && !event.altKey) {
           event.preventDefault();
-          const player = trackPlayer.state;
-          if (!player.track) setNotice('Import a track first, then space plays it.');
-          else if (player.playing) trackPlayer.pause();
-          else trackPlayer.play();
+          // Whichever player belongs to the tab in front.
+          const target = workspace === 'Learn' ? learnPlayer : trackPlayer;
+          const player = target.state;
+          if (!player.track) {
+            setNotice(workspace === 'Learn' ? 'Import a song first, then space plays it.' : 'Import a track first, then space plays it.');
+          } else if (player.playing) target.pause();
+          else target.play();
           return;
         }
         if (event.key.toLowerCase() === 'z' && !event.ctrlKey && !event.metaKey) {
@@ -93,7 +98,7 @@ function Shell() {
           setWorkspace('Library');
           setNotice('Name the project to save it.');
         }
-      } else if (key >= '1' && key <= '6') {
+      } else if (key >= '1' && key <= String(WORKSPACES.length)) {
         event.preventDefault();
         setWorkspace(WORKSPACES[Number(key) - 1].id);
       }
@@ -137,6 +142,7 @@ function Shell() {
       </header>
 
       {workspace === 'Studio' && <Studio onOpenStream={() => setWorkspace('Stream')} />}
+      {workspace === 'Learn' && <LearnPage />}
       {workspace === 'Devices' && <Devices />}
       {workspace === 'Mixer' && <Mixer />}
       {workspace === 'Stream' && <StreamPage />}

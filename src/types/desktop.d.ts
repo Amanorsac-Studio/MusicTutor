@@ -22,6 +22,8 @@ export type StreamStatusBridge = {
   bytesSent: number;
 };
 
+export type StemName = 'drums' | 'bass' | 'other' | 'vocals' | 'guitar' | 'piano';
+
 export type DesktopBridge = {
   isDesktop: boolean;
   minimize: () => void;
@@ -71,6 +73,17 @@ export type DesktopBridge = {
   /** One chunk of recorded WebM, forwarded to that output's ffmpeg. */
   streamChunk?: (bytes: ArrayBuffer, output?: 'primary' | 'secondary') => void;
   onStreamStatus?: (handler: (status: StreamStatusBridge) => void) => () => void;
+
+  /* Stem separation. Runs on this computer, in a process of its own. */
+  stemStatus?: () => Promise<{ modelReady: boolean; modelBytes: number; busy: boolean; stems: StemName[] }>;
+  /** Fetch the separation network. Once only; about 136 MB. */
+  stemDownload?: () => Promise<boolean>;
+  /** Separate a 44.1 kHz stereo recording. Resolves with the song's fingerprint. */
+  stemSeparate?: (left: ArrayBuffer, right: ArrayBuffer) => Promise<{ id: string; cached: boolean; stems: StemName[] }>;
+  stemCancel?: () => Promise<void>;
+  /** One separated stem, as a WAV file's bytes. */
+  stemRead?: (id: string, stem: StemName) => Promise<ArrayBuffer>;
+  onStemProgress?: (handler: (progress: { stage: 'download' | 'separate'; fraction: number }) => void) => () => void;
 };
 
 declare global {

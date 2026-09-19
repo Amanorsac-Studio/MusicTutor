@@ -110,6 +110,14 @@ export class TrackPlayer {
 
   private listeners = new Set<() => void>();
 
+  /**
+   * Which strips on the desk this player owns. Two players sharing a strip
+   * would fight over one fader, so each names its own.
+   */
+  constructor(private readonly strips = {
+    track: 'track', trackLabel: 'Backing track', click: 'click', clickLabel: 'Metronome',
+  }) {}
+
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => { this.listeners.delete(listener); };
@@ -128,8 +136,8 @@ export class TrackPlayer {
       this.gain.gain.value = this.volume;
       // Its own strip on the desk, so it has a fader, a meter and a mute like
       // every other source rather than being wired invisibly into the mix.
-      audioEngine.connectToChannel('track', this.gain, {
-        label: 'Backing track', kind: 'track', gain: 0.8,
+      audioEngine.connectToChannel(this.strips.track, this.gain, {
+        label: this.strips.trackLabel, kind: 'track', gain: 0.8,
       });
     }
     if (!this.metronomeGain) {
@@ -151,12 +159,12 @@ export class TrackPlayer {
     if (!node) return;
     try { node.disconnect(); } catch { /* nothing attached yet */ }
     if (this.clickToStream) {
-      audioEngine.connectToChannel('click', node, {
-        label: 'Metronome', kind: 'click', gain: 0.7,
+      audioEngine.connectToChannel(this.strips.click, node, {
+        label: this.strips.clickLabel, kind: 'click', gain: 0.7,
       });
     } else {
       // Monitor only, so the strip would be a fader that does nothing.
-      audioEngine.dropChannel('click');
+      audioEngine.dropChannel(this.strips.click);
       audioEngine.connectMonitorOnly(node);
     }
   }
@@ -199,6 +207,51 @@ export class TrackPlayer {
       peaks: peaksFor(channels, PEAK_BUCKETS),
     };
     this.notify();
+    return this.info;
+  }
+
+  /** The decoded recording, for analysis that needs the samples themselves. */
+  get audioBuffer(): AudioBuffer | undefined {
+    return this.source;
+  }
+
+  /**
+   * Load audio that is already decoded, such as a separated stem.
+   *
+   * Tempo and beats may be handed over from the song the stem came from: a bass
+   * line on its own has the same beat as the band it was taken out of, and
+   * detecting it again from a sparser signal could only do worse.
+   */
+  loadBuffer(buffer: AudioBuffer, name: string, known?: { tempo: TempoEstimate; grid: BeatGrid }): TrackInfo {
+    const mono = buffer.getChannelData(0);
+    const tempo = known?.tempo ?? detectTempo(mono, buffer.sampleRate);
+    const grid = known?.grid ?? trackBeats(mono, buffer.sampleRate, tempo.bpm);
+    const channels = Array.from({ length: buffer.numberOfChannels }, (_, i) => buffer.getChannelData(i));
+    const keepSpeed = this.speed;
+    const keepSemitones = this.semitones;
+    const at = this.position;
+    this.stop();
+    this.source = buffer;
+    this.rendered = buffer;
+    this.rate = 1;
+    this.factor = 1;
+    this.speed = 1;
+    this.semitones = 0;
+    this.bpmOverride = null;
+    this.info = {
+      id: `${name}-${Date.now().toString(36)}`,
+      name,
+      duration: buffer.duration,
+      sampleRate: buffer.sampleRate,
+      tempo, grid,
+      peaks: peaksFor(channels, PEAK_BUCKETS),
+    };
+    this.pausedAt = Math.min(at, buffer.duration);
+    this.notify();
+    // Carry the practice settings over, so switching stems mid-loop at 70%
+    // does not snap back to full speed.
+    if (keepSpeed !== 1) this.setSpeed(keepSpeed);
+    if (keepSemitones !== 0) this.setSemitones(keepSemitones);
     return this.info;
   }
 
@@ -687,3 +740,14 @@ export class TrackPlayer {
 }
 
 export const trackPlayer = new TrackPlayer();
+
+/**
+ * A second player, for the Learn tab.
+ *
+ * Kept apart from the backing-track player on purpose: a teacher may have a
+ * backing track cued for the lesson while studying a different song to teach,
+ * and loading one must not throw the other away.
+ */
+export const learnPlayer = new TrackPlayer({
+  track: 'learn', trackLabel: 'Song being learned', click: 'learn-click', clickLabel: 'Learn click',
+});

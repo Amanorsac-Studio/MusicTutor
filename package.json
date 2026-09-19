@@ -31,7 +31,8 @@
     "typescript": "latest",
     "vite": "latest",
     "vitest": "latest",
-    "wait-on": "latest"
+    "wait-on": "latest",
+    "@spotify/basic-pitch": "1.0.1"
   },
   "main": "electron/main.cjs",
   "build": {
@@ -45,11 +46,16 @@
       "dist/**/*",
       "electron/**/*",
       "package.json",
-      "!**/*.map"
+      "!**/*.map",
+      "!node_modules/onnxruntime-node/bin/**/linux/**"
     ],
     "win": {
       "target": "nsis",
-      "artifactName": "MusicTutor-Setup-${version}.${ext}"
+      "artifactName": "MusicTutor-Setup-${version}.${ext}",
+      "files": [
+        "!node_modules/onnxruntime-node/bin/**/darwin/**",
+        "!node_modules/onnxruntime-node/bin/**/win32/arm64/**"
+      ]
     },
     "nsis": {
       "oneClick": false,
@@ -59,10 +65,18 @@
       "shortcutName": "MusicTutor"
     },
     "asarUnpack": [
-      "node_modules/ffmpeg-static/**"
-    ]
+      "node_modules/ffmpeg-static/**",
+      "node_modules/onnxruntime-node/**",
+      "node_modules/onnxruntime-common/**"
+    ],
+    "mac": {
+      "files": [
+        "!node_modules/onnxruntime-node/bin/**/win32/**"
+      ]
+    }
   },
   "dependencies": {
-    "ffmpeg-static": "^5.3.0"
+    "ffmpeg-static": "^5.3.0",
+    "onnxruntime-node": "1.22.0"
   }
 }
