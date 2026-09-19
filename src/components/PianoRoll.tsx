@@ -22,7 +22,11 @@ const AHEAD = 6;
  */
 export function PianoRoll({
   notes, chords, grid, range, accidental, transpose, getPosition, loop, onSeek,
+  behind = BEHIND, ahead = AHEAD,
 }: {
+  /** Seconds shown behind and ahead of the line. Live sound has no "ahead". */
+  behind?: number;
+  ahead?: number;
   notes: RollNote[];
   chords: ChordSegment[];
   grid?: BeatGrid;
@@ -73,8 +77,8 @@ export function PianoRoll({
       const high = range.high;
       const rows = high - low + 1;
       const rowHeight = rollHeight / rows;
-      const perSecond = (width - gutter) / (BEHIND + AHEAD);
-      const playheadX = gutter + BEHIND * perSecond;
+      const perSecond = (width - gutter) / (behind + ahead);
+      const playheadX = gutter + behind * perSecond;
       const xOf = (time: number) => playheadX + (time - now) * perSecond;
       const yOf = (midi: number) => rollTop + (high - midi) * rowHeight;
 
@@ -116,7 +120,7 @@ export function PianoRoll({
 
       // Notes. The tune is drawn in the accent colour so it can be followed.
       const shift = transpose;
-      notesBetween(notes, now - BEHIND - 1, now + AHEAD + 1).forEach(note => {
+      notesBetween(notes, now - behind - 1, now + ahead + 1).forEach(note => {
         const midi = note.midi + shift;
         if (midi < low || midi > high) return;
         const x = Math.max(gutter, xOf(note.start));
@@ -177,7 +181,7 @@ export function PianoRoll({
     };
     frame = window.requestAnimationFrame(paint);
     return () => window.cancelAnimationFrame(frame);
-  }, [notes, chords, grid, range.low, range.high, accidental, transpose, getPosition, loop, size]);
+  }, [notes, chords, grid, range.low, range.high, accidental, transpose, getPosition, loop, size, behind, ahead]);
 
   return (
     <div className="piano-roll" ref={holder}>
@@ -188,8 +192,8 @@ export function PianoRoll({
         onClick={event => {
           const box = event.currentTarget.getBoundingClientRect();
           const gutter = 46;
-          const perSecond = (box.width - gutter) / (BEHIND + AHEAD);
-          const playheadX = gutter + BEHIND * perSecond;
+          const perSecond = (box.width - gutter) / (behind + ahead);
+          const playheadX = gutter + behind * perSecond;
           onSeek(Math.max(0, getPosition() + (event.clientX - box.left - playheadX) / perSecond));
         }}
       />

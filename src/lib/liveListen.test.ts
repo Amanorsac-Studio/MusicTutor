@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
-import { ChordSmoother } from './liveListen';
+import { ChordSmoother, NoteStitcher } from './liveListen';
 import { chordTemplate } from './chordTrack';
 
 const bassOn = (root: number) => {
@@ -42,6 +42,46 @@ describe('ChordSmoother', () => {
     let heard = null;
     for (let i = 0; i < 12; i += 1) heard = smoother.push(quiet, quiet, false);
     expect(heard).toBeNull();
+  });
+});
+
+describe('NoteStitcher', () => {
+  const n = (start: number, end: number, midi: number, velocity = 0.6) => ({ start, end, midi, velocity });
+
+  it('counts a note once however many stretches report it', () => {
+    const stitcher = new NoteStitcher();
+    stitcher.add([n(2, 2.5, 60)], 0);
+    stitcher.add([n(1.3, 1.8, 60)], 0.7);
+    expect(stitcher.notes).toHaveLength(1);
+    expect(stitcher.notes[0]).toMatchObject({ start: 2, end: 2.5, midi: 60 });
+  });
+
+  it('lengthens a held note instead of striking it again', () => {
+    const stitcher = new NoteStitcher();
+    stitcher.add([n(3, 4, 48)], 0);
+    // The next stretch begins mid-note, so the network reports it from its edge.
+    stitcher.add([n(0, 1.5, 48)], 3.5);
+    expect(stitcher.notes).toHaveLength(1);
+    expect(stitcher.notes[0].end).toBeCloseTo(5, 5);
+  });
+
+  it('keeps the same key played twice as two notes', () => {
+    const stitcher = new NoteStitcher();
+    stitcher.add([n(1, 1.4, 60), n(1.5, 1.9, 60)], 0);
+    expect(stitcher.notes).toHaveLength(2);
+  });
+
+  it('ignores the tail of a note from before listening began', () => {
+    const stitcher = new NoteStitcher();
+    stitcher.add([n(0, 0.8, 60)], 0);
+    expect(stitcher.notes).toHaveLength(0);
+  });
+
+  it('forgets what has scrolled away', () => {
+    const stitcher = new NoteStitcher();
+    stitcher.add([n(1, 1.5, 60), n(30, 30.5, 62)], 0);
+    stitcher.prune(10);
+    expect(stitcher.notes.map(note => note.midi)).toEqual([62]);
   });
 });
 

@@ -62,6 +62,37 @@ describe('joinFragments', () => {
   });
 });
 
+describe('dropGhosts', () => {
+  it('drops a faint octave struck with a loud note', () => {
+    const kept = tidyNotes([
+      { start: 1, end: 2, midi: 48, velocity: 0.9 },
+      { start: 1.01, end: 1.4, midi: 60, velocity: 0.2 },
+    ]);
+    expect(kept.map(n => n.midi)).toEqual([48]);
+  });
+
+  it('keeps an octave that was really played', () => {
+    expect(tidyNotes([
+      { start: 1, end: 2, midi: 48, velocity: 0.8 },
+      { start: 1, end: 2, midi: 60, velocity: 0.7 },
+    ])).toHaveLength(2);
+  });
+
+  it('keeps a quiet note that is not an overtone of anything', () => {
+    expect(tidyNotes([
+      { start: 1, end: 2, midi: 48, velocity: 0.9 },
+      { start: 1, end: 2, midi: 63, velocity: 0.2 },
+    ])).toHaveLength(2);
+  });
+
+  it('keeps a quiet octave that arrives later, as a tune would', () => {
+    expect(tidyNotes([
+      { start: 1, end: 3, midi: 48, velocity: 0.9 },
+      { start: 1.5, end: 2, midi: 60, velocity: 0.2 },
+    ])).toHaveLength(2);
+  });
+});
+
 describe('markMelody', () => {
   it('marks the top note of a chord as the tune', () => {
     const marked = markMelody([note(0, 1, 60), note(0, 1, 64), note(0, 1, 72)]);

@@ -215,7 +215,7 @@ for (let root = 0; root < 12; root += 1) {
  * when the extra note is really there, since calling every C a Cmaj7 because
  * a melody brushed the B is the commonest way these systems annoy musicians.
  */
-export function scoreFrame(harmony: Float32Array, bass: Float32Array): Float32Array {
+export function scoreFrame(harmony: Float32Array, bass: Float32Array, bassWeight = 0.16): Float32Array {
   const scores = new Float32Array(VOCABULARY.length);
   let norm = 0;
   for (let i = 0; i < 12; i += 1) norm += harmony[i] * harmony[i];
@@ -229,7 +229,7 @@ export function scoreFrame(harmony: Float32Array, bass: Float32Array): Float32Ar
     const similarity = dot / norm;
     const rootInBass = bassNormal[chord.root];
     const complexity = CHORD_SHAPES[chord.quality].length > 3 ? 0.035 : 0;
-    scores[index] = similarity + 0.16 * rootInBass - complexity;
+    scores[index] = similarity + bassWeight * rootInBass - complexity;
   });
   return scores;
 }
@@ -282,6 +282,101 @@ export function chordVoicing(root: number, quality: ChordQuality, transpose = 0)
   return [36 + pitch, ...CHORD_SHAPES[quality].map(interval => base + interval)];
 }
 
+/**
+ * Move each chord change to where the music actually changes.
+ *
+ * Chords are decided a beat at a time, so every change first lands on a beat.
+ * But the tracked beat can sit a little off the playing, and players push and
+ * drag changes. A change drawn late is the worst kind of wrong for someone
+ * playing along: the screen tells them the new chord after they needed it. So
+ * around each boundary, every possible split is tried, and the one where the
+ * old chord best explains what is before it and the new chord what is after
+ * wins.
+ */
+function refineBoundaries(
+  segments: ChordSegment[], chroma: Chromagram, bassRows: Float32Array[], bassWeight: number,
+): void {
+  const frames = chroma.harmony.length;
+  const indexOf = (segment: ChordSegment) =>
+    VOCABULARY.findIndex(chord => chord.root === segment.root && chord.quality === segment.quality);
+  const centre = (frame: number) => frame * chroma.hopSeconds + chroma.windowSeconds / 2;
+
+  for (let i = 0; i + 1 < segments.length; i += 1) {
+    const before = segments[i];
+    const after = segments[i + 1];
+    const a = indexOf(before);
+    const b = indexOf(after);
+    if (a < 0 || b < 0) continue;
+    // Never search past the middle of either chord, or short chords vanish.
+    const reach = Math.min(0.4, (before.end - before.start) / 2, (after.end - after.start) / 2);
+    const lo = Math.max(0, Math.floor((before.end - reach - chroma.windowSeconds / 2) / chroma.hopSeconds));
+    const hi = Math.min(frames - 1, Math.ceil((before.end + reach - chroma.windowSeconds / 2) / chroma.hopSeconds));
+    if (hi - lo < 2) continue;
+
+    // How much better the new chord explains each frame than the old one.
+    const gain: number[] = [];
+    for (let frame = lo; frame <= hi; frame += 1) {
+      const scores = scoreFrame(chroma.harmony[frame], bassRows[frame] ?? chroma.bass[frame], bassWeight);
+      gain.push(scores[b] - scores[a]);
+    }
+    // Split before frame lo + k: old chord owns [lo, lo+k), new owns the rest.
+    let total = 0;
+    for (const value of gain) total += value;
+    let bestSplit = 0;
+    let bestScore = total;
+    let running = total;
+    for (let k = 1; k <= gain.length; k += 1) {
+      running -= gain[k - 1];
+      if (running > bestScore + 1e-6) { bestScore = running; bestSplit = k; }
+    }
+    // The window reaches forward of its centre, so the attack of the new chord
+    // is heard by frames stamped a little before it. Lean early, never late.
+    const moved = centre(lo + bestSplit) - chroma.hopSeconds;
+    const time = Math.max(before.start + 0.05, Math.min(after.end - 0.05, moved));
+    before.end = time;
+    after.start = time;
+  }
+}
+
+/**
+ * The key a run of chords is in, judged by how long each chord lasts.
+ *
+ * Each of the twenty-four keys is scored by how much of the song its own
+ * chords cover, with the home chord counting extra, and extra again where the
+ * song ends on it. Needed for solfa and numbers, which mean nothing without a
+ * key to count from.
+ */
+export function estimateKey(segments: ChordSegment[]): { root: number; mode: 'major' | 'minor' } {
+  const weight = new Float32Array(24); // 0..11 major triads, 12..23 minor
+  segments.forEach(segment => {
+    if (segment.root < 0 || !segment.quality) return;
+    const minor = segment.quality === 'min' || segment.quality === 'm7';
+    weight[(minor ? 12 : 0) + segment.root] += segment.end - segment.start;
+  });
+  const lastChord = [...segments].reverse().find(segment => segment.root >= 0 && segment.quality);
+  const at = (root: number, minor: boolean) => weight[(minor ? 12 : 0) + (((root % 12) + 12) % 12)];
+
+  let best = { root: 0, mode: 'major' as 'major' | 'minor' };
+  let bestScore = -1;
+  for (let root = 0; root < 12; root += 1) {
+    // I ii iii IV V vi, and the same set seen from the relative minor.
+    const family = at(root, false) + at(root + 2, true) + at(root + 4, true)
+      + at(root + 5, false) + at(root + 7, false) + at(root + 9, true);
+    const endsMajor = lastChord && lastChord.root === root && at(root, false) > 0
+      && (lastChord.quality === 'maj' || lastChord.quality === 'maj7' || lastChord.quality === '7');
+    const minorRoot = (root + 9) % 12;
+    const endsMinor = lastChord && lastChord.root === minorRoot
+      && (lastChord.quality === 'min' || lastChord.quality === 'm7');
+    const major = family + at(root, false) * 1.0 + (endsMajor ? family * 0.15 : 0);
+    const minor = family + at(minorRoot, true) * 1.0 + (endsMinor ? family * 0.15 : 0)
+      // The major dominant is what makes a minor key sound like one.
+      + at(minorRoot + 7, false) * 0.5;
+    if (major > bestScore) { bestScore = major; best = { root, mode: 'major' }; }
+    if (minor > bestScore) { bestScore = minor; best = { root: minorRoot, mode: 'minor' }; }
+  }
+  return best;
+}
+
 /** Average rows of a chromagram between two times. */
 function averageBetween(rows: Float32Array[], from: number, to: number): Float32Array {
   const out = new Float32Array(12);
@@ -293,6 +388,13 @@ function averageBetween(rows: Float32Array[], from: number, to: number): Float32
 
 export type ChordOptions = {
   concertPitch?: number;
+  /**
+   * The bass on its own, when the song has been separated. `samples` should
+   * then be the chord instruments without it. A band decides a chord between
+   * the bass player and the keys, and hearing each cleanly, rather than both
+   * through the drums and the singer, is the largest single gain there is.
+   */
+  bassSamples?: Float32Array;
   /** How reluctant the result is to change chord. Higher is steadier. */
   stickiness?: number;
   onProgress?: (fraction: number) => void;
@@ -311,6 +413,14 @@ export function recogniseChords(
   const duration = samples.length / sampleRate;
   if (samples.length < CHROMA_WINDOW) return [];
   const chroma = chromagram(samples, sampleRate, options.concertPitch ?? 440, options.onProgress);
+  const separated = options.bassSamples && options.bassSamples.length >= CHROMA_WINDOW
+    ? chromagram(options.bassSamples, sampleRate, options.concertPitch ?? 440)
+    : null;
+  const bassRows = separated ? separated.bass : chroma.bass;
+  // A clean bass line names the root more reliably than a band's low end, but
+  // only a little more weight is safe: bass players walk, and a passing fifth
+  // trusted too far renames the chord for a beat.
+  const bassWeight = separated ? 0.2 : 0.16;
 
   // Slice boundaries: the beats, extended to cover the start and the end.
   let edges = beats.filter(beat => beat > 0 && beat < duration);
@@ -347,7 +457,7 @@ export function recogniseChords(
     }
     slices.push({
       start, end,
-      scores: scoreFrame(harmony, averageBetween(chroma.bass, from, to)),
+      scores: scoreFrame(harmony, averageBetween(bassRows, from, to), bassWeight),
     });
   }
   if (!slices.length) return [];
@@ -397,6 +507,7 @@ export function recogniseChords(
     if (last && last.root === root && last.quality === quality) last.end = slice.end;
     else segments.push({ start: slice.start, end: slice.end, root, quality });
   });
+  refineBoundaries(segments, chroma, bassRows, bassWeight);
   return segments;
 }
 

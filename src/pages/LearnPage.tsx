@@ -11,13 +11,17 @@
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft, ArrowRight, Ear, FileAudio, Home, Minus, Pause, Play, Plus, Repeat, RotateCw,
-  Scissors, Square, Trash2, Tv, Upload, Volume2,
+  Scissors, Square, Trash2, Tv, Upload, Volume2, VolumeX,
 } from 'lucide-react';
 import { useStudio } from '../lib/useStudio';
 import { learnPlayer } from '../lib/player';
-import { learnSession, STEM_LABELS, STEM_ORDER, type LearnSource } from '../lib/learn';
+import {
+  learnSession, STEM_LABELS, STEM_NAMES, VIEW_LABELS, type NoteView,
+} from '../lib/learn';
 import { liveListener } from '../lib/liveListen';
 import { chordAt, chordLabel, chordVoicing, CHORD_SHAPES } from '../lib/chordTrack';
+import { labelNotes, type NoteLabelMode } from '../lib/solfa';
+import { noteName } from '../lib/chords';
 import { notesAt, usedRange } from '../lib/transcribe';
 import { BASS_TUNINGS, likelyPosition, positionsFor, type FretPosition } from '../lib/fretboard';
 import { drawFretboard } from '../lib/drawFretboard';
@@ -45,8 +49,55 @@ function useStore<T>(store: { state: T; subscribe: (listener: () => void) => () 
   return state;
 }
 
+/**
+ * What the screen shows runs this far ahead of the sound. Drawing takes a
+ * moment and eyes take longer; a chord named exactly on time is read late.
+ */
+const DISPLAY_LEAD = 0.08;
+
+const NOTE_MODES: Array<{ id: NoteLabelMode; label: string }> = [
+  { id: 'names', label: 'Names' },
+  { id: 'solfa', label: 'Solfa' },
+  { id: 'numbers', label: '1 2 3' },
+];
+
+const VIEWS: NoteView[] = ['mix', 'bass', 'keys', 'guitar', 'vocals'];
+
+/** The notes sounding now, large, as names, solfa or scale numbers. */
+function NoteReadout({
+  midi, mode, onMode, keyRoot, keyMode, accidental, caption,
+}: {
+  midi: number[];
+  mode: NoteLabelMode;
+  onMode: (mode: NoteLabelMode) => void;
+  keyRoot: number;
+  keyMode: 'major' | 'minor';
+  accidental: 'sharp' | 'flat';
+  caption: string;
+}) {
+  const labels = labelNotes(midi, mode, { keyRoot, mode: keyMode, accidental });
+  const text = labels.join('  ');
+  // Shrinks as the chord fills up, so one bass note is huge and six still fit.
+  const size = text.length <= 3 ? 58 : text.length <= 8 ? 44 : text.length <= 14 ? 32 : 24;
+  return (
+    <div className="learn-notes">
+      <div className="learn-notes-head">
+        <small>{caption}</small>
+        <div className="learn-note-modes">
+          {NOTE_MODES.map(item => (
+            <button key={item.id} className={mode === item.id ? 'active' : ''} onClick={() => onMode(item.id)}>
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <strong style={{ fontSize: size }} data-notes={midi.join(',')}>{text || '—'}</strong>
+    </div>
+  );
+}
+
 /** The bass neck, following the notes heard in the bass stem. */
-function LearnFretboard({ midi }: { midi: number | null }) {
+function LearnFretboard({ midi, keyRoot }: { midi: number | null; keyRoot: number }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const last = useRef<FretPosition | null>(null);
   const { settings } = useStudio();
@@ -78,13 +129,13 @@ function LearnFretboard({ midi }: { midi: number | null }) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     drawFretboard(ctx, { width: canvas.width, height: canvas.height }, {
       tuning, midi, position, frets,
-      keyRoot: settings.keyRoot,
+      keyRoot,
       accidental: settings.accidental,
       accent: '#ffa629',
       background: 'transparent',
       showReadout: true,
     });
-  }, [midi, size, settings.bassTuning, settings.bassFrets, settings.keyRoot, settings.accidental]);
+  }, [midi, size, settings.bassTuning, settings.bassFrets, keyRoot, settings.accidental]);
 
   return <canvas className="learn-neck" ref={ref} />;
 }
@@ -100,6 +151,7 @@ function SongView() {
   const fileRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [show, setShow] = useState<'notes' | 'chord'>('notes');
+  const [noteMode, setNoteMode] = useState<NoteLabelMode>('names');
   const [sounding, setSounding] = useState<number[]>([]);
   const [chordIndex, setChordIndex] = useState(-1);
   const [position, setPosition] = useState(0);
@@ -112,7 +164,7 @@ function SongView() {
   // when the answer changes, so the page is not re-rendered sixty times a second.
   useEffect(() => {
     const id = window.setInterval(() => {
-      const now = learnPlayer.position;
+      const now = learnPlayer.position + (learnPlayer.state.playing ? DISPLAY_LEAD : 0);
       const midi = notesAt(session.notes, now).map(note => note.midi).sort((a, b) => a - b);
       setSounding(before => (before.length === midi.length && before.every((m, i) => m === midi[i]) ? before : midi));
       const chord = chordAt(session.chords, now);
@@ -167,9 +219,15 @@ function SongView() {
     void learnSession.open(file, settings.concertPitch);
   };
 
-  const bassLine = session.source === 'bass';
+  const bassLine = session.view === 'bass';
   const busy = Boolean(session.working);
   const stems = session.stems;
+  const stemsReady = stems.phase === 'ready';
+  const splitting = stems.phase === 'downloading' || stems.phase === 'separating' || stems.phase === 'loading';
+  // The key moves with the transposition, or solfa would name the wrong do.
+  const keyRoot = (((session.key.root + transpose) % 12) + 12) % 12;
+  const allAudible = STEM_NAMES.every(stem => session.audible[stem]);
+  const waitingForNotes = !session.detected.includes(session.view);
 
   return (
     <div className="learn-song">
@@ -225,7 +283,7 @@ function SongView() {
                 <video ref={videoRef} className="learn-video" src={session.videoUrl} muted playsInline />
               )}
               <div className="learn-chord" aria-live="off">
-                <small>{STEM_LABELS[session.source]} · chord now</small>
+                <small>Chord now{session.chordsFromStems ? ' · from bass and keys' : ''}</small>
                 <strong>{chord ? chordLabel(chord, settings.accidental, transpose) : '—'}</strong>
                 <span>{nextChord ? `Next: ${chordLabel(nextChord, settings.accidental, transpose)}` : ' '}</span>
               </div>
@@ -242,11 +300,20 @@ function SongView() {
                     <i><em style={{ width: `${Math.round(session.progress * 100)}%` }} /></i>
                   </div>
                 )}
-                {!busy && !session.notes.length && session.source !== 'drums' && (
+                {!busy && !waitingForNotes && !session.notes.length && (
                   <small className="learn-quiet">No clear notes were heard in this part.</small>
                 )}
                 {session.error && <div className="page-banner error">{session.error}</div>}
               </div>
+              <NoteReadout
+                midi={sounding.map(m => m + transpose)}
+                mode={noteMode}
+                onMode={setNoteMode}
+                keyRoot={keyRoot}
+                keyMode={session.key.mode}
+                accidental={settings.accidental}
+                caption={`${VIEW_LABELS[session.view]} · notes now`}
+              />
             </div>
 
             <PianoRoll
@@ -263,7 +330,7 @@ function SongView() {
 
             <div className={`learn-instrument ${bassLine ? 'neck' : ''}`}>
               {bassLine ? (
-                <LearnFretboard midi={sounding.length ? sounding[0] + transpose : null} />
+                <LearnFretboard midi={sounding.length ? sounding[0] + transpose : null} keyRoot={keyRoot} />
               ) : (
                 <PianoKeyboard
                   active={lit}
@@ -357,29 +424,75 @@ function SongView() {
               The orange bars on the roll are the tune. Keys marked with a dot belong to the chord being played.
             </p>
 
+            <div className="learn-keyrow">
+              <small>Song key</small>
+              <select
+                aria-label="Song key"
+                value={`${session.key.root}:${session.key.mode}`}
+                onChange={event => {
+                  const [root, mode] = event.target.value.split(':');
+                  learnSession.setKey({ root: Number(root), mode: mode === 'minor' ? 'minor' : 'major' });
+                }}
+              >
+                {(['major', 'minor'] as const).flatMap(mode => Array.from({ length: 12 }, (_, root) => (
+                  <option key={`${root}:${mode}`} value={`${root}:${mode}`}>
+                    {noteName(60 + root, settings.accidental)} {mode}
+                  </option>
+                )))}
+              </select>
+            </div>
+
             <hr />
-            <div className="inspector-title"><span>Instruments</span><Scissors size={15} /></div>
+            <div className="inspector-title"><span>Notes on the roll</span></div>
+            <div className="learn-views">
+              {VIEWS.map(view => {
+                const found = session.detected.includes(view);
+                return (
+                  <button
+                    key={view}
+                    className={session.view === view ? 'active' : ''}
+                    disabled={view !== 'mix' && !stemsReady}
+                    title={found ? 'Show these notes' : 'Find and show these notes'}
+                    onClick={() => learnSession.showNotes(view)}
+                  >
+                    {VIEW_LABELS[view]}
+                    {!found && (view === 'mix' || stemsReady) && <em>detect</em>}
+                  </button>
+                );
+              })}
+            </div>
+            {stemsReady && (
+              <p className="panel-hint">
+                Bass and keys are read for you. The others are read when you pick them.
+                Keys are heard together with "other", where pads and organs end up.
+              </p>
+            )}
+
+            <hr />
+            <div className="inspector-title"><span>Play along</span><Scissors size={15} /></div>
 
             {stems.phase === 'none' && (
               <>
                 <p className="panel-hint">
-                  Split the song into bass, keys, guitar, vocals and drums, then study one on its own.
-                  It takes a few minutes and is kept, so it only happens once per song.
-                  The first time, a 136 MB model is downloaded.
+                  Split the song into bass, keys, guitar, vocals and drums. Then mute the part you are
+                  learning and play it yourself with the rest of the band. The chords are also heard again
+                  from the bass and keys alone, which is more accurate. It takes a few minutes, once per song.
                 </p>
-                <button className="primary small wide" onClick={() => void learnSession.separate()} disabled={busy}>
+                <button className="primary small wide" onClick={() => void learnSession.separate()}>
                   <Scissors size={14} />Separate the instruments
                 </button>
               </>
             )}
-            {(stems.phase === 'downloading' || stems.phase === 'separating') && (
+            {splitting && (
               <div className="learn-progress" role="status">
                 <span>
                   {stems.phase === 'downloading'
                     ? `Downloading the model… ${Math.round(stems.progress * 100)}%`
-                    : stems.progress > 0
-                      ? `Separating… ${Math.round(stems.progress * 100)}%`
-                      : 'Getting ready. This first step takes half a minute…'}
+                    : stems.phase === 'loading'
+                      ? 'Opening the instruments…'
+                      : stems.progress > 0
+                        ? `Separating… ${Math.round(stems.progress * 100)}%`
+                        : 'Getting ready. This first step takes half a minute…'}
                 </span>
                 <i><em style={{ width: `${Math.round(stems.progress * 100)}%` }} /></i>
                 {stems.phase === 'separating' && (
@@ -389,21 +502,26 @@ function SongView() {
             )}
             {stems.error && <div className="page-banner error">{stems.error}</div>}
 
-            <div className="learn-stems">
-              {STEM_ORDER.map((source: LearnSource) => (
-                <button
-                  key={source}
-                  className={session.source === source ? 'active' : ''}
-                  disabled={busy || (source !== 'mix' && stems.phase !== 'ready')}
-                  onClick={() => void learnSession.listenTo(source)}
-                >{STEM_LABELS[source]}</button>
-              ))}
-            </div>
-            {stems.phase === 'ready' && (
-              <p className="panel-hint">
-                Pick an instrument to hear it alone and see its notes. Bass shows on a bass neck.
-                Keys are the hardest instrument to separate cleanly, so expect some bleed.
-              </p>
+            {stemsReady && (
+              <>
+                <div className="learn-mixer">
+                  {STEM_NAMES.map(stem => (
+                    <div key={stem} className={`learn-stem ${session.audible[stem] ? '' : 'muted'}`}>
+                      <button
+                        className="learn-mute"
+                        aria-pressed={!session.audible[stem]}
+                        aria-label={`${session.audible[stem] ? 'Mute' : 'Unmute'} ${STEM_LABELS[stem]}`}
+                        onClick={() => learnSession.toggle(stem)}
+                      >{session.audible[stem] ? <Volume2 size={14} /> : <VolumeX size={14} />}</button>
+                      <span>{STEM_LABELS[stem]}</span>
+                      <button className="learn-solo" onClick={() => learnSession.solo(stem)}>Solo</button>
+                    </div>
+                  ))}
+                </div>
+                <button className="subtle-btn" onClick={() => learnSession.everyone()} disabled={allAudible}>
+                  Bring everyone back
+                </button>
+              </>
             )}
 
             <hr />
@@ -458,11 +576,35 @@ function YouTubeView() {
   useEffect(() => () => liveListener.stop(), []);
 
   const chord = live.chord;
+  const [noteMode, setNoteMode] = useState<NoteLabelMode>('names');
+  const [sounding, setSounding] = useState<number[]>([]);
+  const getPosition = useCallback(() => liveListener.position, []);
+
+  // The notes crossing the line now. The line runs a steady couple of seconds
+  // behind the sound, which is what gives the app time to be sure of them.
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const midi = notesAt(live.notes, liveListener.position).map(note => note.midi).sort((a, b) => a - b);
+      setSounding(before => (before.length === midi.length && before.every((m, i) => m === midi[i]) ? before : midi));
+    }, 60);
+    return () => window.clearInterval(id);
+  }, [live.notes]);
+
+  // Sized to what is on screen, in whole octaves so the rows do not shuffle
+  // about every time a note a step higher arrives.
+  const range = useMemo(() => {
+    const now = liveListener.position;
+    const used = usedRange(live.notes.filter(note => note.end > now - 6));
+    return { low: Math.max(21, Math.floor(used.low / 12) * 12), high: Math.min(108, Math.ceil(used.high / 12) * 12) };
+  }, [live.notes]);
   const lit = useMemo(() => {
     const set = new Set(activeNotes);
-    if (chord) chordVoicing(chord.root, chord.quality).forEach(m => set.add(m));
+    sounding.forEach(m => set.add(m));
     return set;
-  }, [activeNotes, chord]);
+  }, [activeNotes, sounding]);
+  const chordTones = chord
+    ? CHORD_SHAPES[chord.quality].map(interval => (chord.root + interval) % 12)
+    : undefined;
 
   if (!isDesktop) {
     return (
@@ -494,6 +636,7 @@ function YouTubeView() {
       </div>
 
       <div className="learn-live">
+        <div className="learn-live-top">
         <div className="learn-chord">
           <small>{live.listening ? 'Chord now' : 'Not listening'}</small>
           <strong>{chord ? chordLabel(chord, settings.accidental) : '—'}</strong>
@@ -505,11 +648,34 @@ function YouTubeView() {
             onClick={() => (live.listening ? liveListener.stop() : void liveListener.start(settings.concertPitch))}
           ><Ear size={14} />{live.listening ? 'Stop listening' : 'Listen and name the chords'}</button>
           <p className="panel-hint">
-            Play a video, then listen. The app hears what the computer is playing and names the chord a moment
-            behind the music. A video cannot be slowed, looped or separated here — for that, import the song as a file.
+            Play a video, then listen. The chord is named as it sounds. The notes run about two seconds behind,
+            on purpose: that is the time it takes to be sure of them. Best on a clean piano or a single instrument.
+            Solfa and numbers use the key set in the Tutorial tab.
           </p>
           {live.error && <div className="page-banner error">{live.error}</div>}
         </div>
+          <NoteReadout
+            midi={sounding}
+            mode={noteMode}
+            onMode={setNoteMode}
+            keyRoot={settings.keyRoot}
+            keyMode={settings.mode}
+            accidental={settings.accidental}
+            caption="Notes now"
+          />
+        </div>
+        <PianoRoll
+          notes={live.notes}
+          chords={[]}
+          range={range}
+          accidental={settings.accidental}
+          transpose={0}
+          getPosition={getPosition}
+          loop={null}
+          onSeek={() => { /* live sound has nowhere to seek to */ }}
+          behind={5}
+          ahead={0.4}
+        />
         <div className="learn-instrument">
           <PianoKeyboard
             active={lit}
@@ -520,6 +686,7 @@ function YouTubeView() {
             accent="#ffa629"
             namePlayed
             fill
+            highlightPitchClasses={chordTones}
           />
         </div>
       </div>

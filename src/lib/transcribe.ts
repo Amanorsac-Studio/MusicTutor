@@ -49,12 +49,33 @@ export function tidyNotes(
   const minSeconds = options.minSeconds ?? 0.07;
   const minVelocity = options.minVelocity ?? 0.16;
   const rounded = raw.map(note => ({ ...note, midi: Math.round(note.midi), melody: false }));
-  return joinFragments(rounded)
+  return dropGhosts(joinFragments(rounded))
     .filter(note =>
       note.end - note.start >= minSeconds
       && note.velocity >= minVelocity
       && note.midi >= LOWEST && note.midi <= HIGHEST)
     .sort((a, b) => a.start - b.start || a.midi - b.midi);
+}
+
+/**
+ * Drop the echoes a real note throws upward.
+ *
+ * A piano string sounds its octave, its twelfth and its double octave along
+ * with itself, and the network sometimes reports those overtones as quiet notes
+ * of their own struck at the same instant. Nobody played them. A note is taken
+ * for a ghost when it starts with a much louder note that sits exactly one of
+ * those intervals below it. A real octave played by a real hand is about as
+ * loud as its partner, and is kept.
+ */
+export function dropGhosts(notes: RollNote[]): RollNote[] {
+  const OVERTONES = [12, 19, 24, 28, 31];
+  const sorted = [...notes].sort((a, b) => a.start - b.start);
+  return sorted.filter(note => !sorted.some(other =>
+    other !== note
+    && OVERTONES.includes(note.midi - other.midi)
+    && Math.abs(other.start - note.start) <= 0.05
+    && other.end > note.start
+    && note.velocity < other.velocity * 0.45));
 }
 
 /**
@@ -211,6 +232,44 @@ function loadRuntime(): Promise<Runtime> {
   // A failed load should be retried next time, not remembered forever.
   runtime.catch(() => { runtime = null; });
   return runtime;
+}
+
+/**
+ * Load the network and run it once on nothing.
+ *
+ * The first run compiles everything for the graphics card and takes seconds.
+ * Done while the user is still reaching for the play button, it costs nothing;
+ * done on the first real notes, those notes are lost.
+ */
+export async function warmUp(): Promise<void> {
+  const { pitch } = await loadRuntime();
+  await pitch.evaluateModel(new Float32Array(MODEL_RATE * 2), () => { /* nothing to keep */ }, () => { /* nor to report */ });
+}
+
+/**
+ * Transcribe a short stretch of sound that is already mono at MODEL_RATE.
+ *
+ * For live listening, where the audio arrives a few seconds at a time. Times
+ * are from the start of the stretch. Nothing is tidied: the caller is stitching
+ * stretches together and needs the raw notes to do it.
+ */
+export async function transcribeChunk(
+  audio: Float32Array,
+): Promise<Array<{ start: number; end: number; midi: number; velocity: number }>> {
+  const { pitch, tools } = await loadRuntime();
+  const frames: number[][] = [];
+  const onsets: number[][] = [];
+  await pitch.evaluateModel(
+    audio,
+    (f, o) => { frames.push(...f); onsets.push(...o); },
+    () => { /* too short to be worth reporting */ },
+  );
+  return tools.noteFramesToTime(tools.outputToNotesPoly(frames, onsets, 0.5, 0.3, 5)).map(event => ({
+    start: event.startTimeSeconds,
+    end: event.startTimeSeconds + event.durationSeconds,
+    midi: Math.round(event.pitchMidi),
+    velocity: event.amplitude,
+  }));
 }
 
 /**

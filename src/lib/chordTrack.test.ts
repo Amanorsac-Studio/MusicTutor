@@ -317,3 +317,30 @@ describe('chordVoicing', () => {
     expect(chordVoicing(0, 'maj', 2)).toEqual([38, 62, 66, 69]);
   });
 });
+
+describe('estimateKey', () => {
+  const seg = (start: number, end: number, root: number, quality: 'maj' | 'min') => ({ start, end, root, quality });
+
+  it('finds C major from C Am F G', async () => {
+    const { estimateKey } = await import('./chordTrack');
+    expect(estimateKey([seg(0, 4, 0, 'maj'), seg(4, 8, 9, 'min'), seg(8, 12, 5, 'maj'), seg(12, 16, 7, 'maj'), seg(16, 20, 0, 'maj')]))
+      .toEqual({ root: 0, mode: 'major' });
+  });
+
+  it('finds A minor when the song lives on Am and ends there', async () => {
+    const { estimateKey } = await import('./chordTrack');
+    expect(estimateKey([seg(0, 8, 9, 'min'), seg(8, 12, 2, 'min'), seg(12, 16, 4, 'maj'), seg(16, 24, 9, 'min')]))
+      .toEqual({ root: 9, mode: 'minor' });
+  });
+
+  it('finds G major from G D Em C', async () => {
+    const { estimateKey } = await import('./chordTrack');
+    expect(estimateKey([seg(0, 4, 7, 'maj'), seg(4, 8, 2, 'maj'), seg(8, 12, 4, 'min'), seg(12, 16, 0, 'maj'), seg(16, 20, 7, 'maj')]))
+      .toEqual({ root: 7, mode: 'major' });
+  });
+
+  it('gives a harmless answer for no chords at all', async () => {
+    const { estimateKey } = await import('./chordTrack');
+    expect(estimateKey([])).toEqual({ root: 0, mode: 'major' });
+  });
+});
