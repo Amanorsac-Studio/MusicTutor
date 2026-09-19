@@ -10,11 +10,13 @@
 
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowLeft, ArrowRight, Ear, FileAudio, Home, Minus, Pause, Play, Plus, Repeat, RotateCw,
+  ArrowLeft, ArrowRight, Circle, Disc, Ear, FileAudio, Home, Minus, Pause, Play, Plus, Repeat, RotateCw,
   Scissors, Square, Trash2, Tv, Upload, Volume2, VolumeX,
 } from 'lucide-react';
 import { useStudio } from '../lib/useStudio';
+import { audioEngine } from '../lib/audioEngine';
 import { learnPlayer } from '../lib/player';
+import { startCapture, type CaptureHandle } from '../lib/recordCapture';
 import {
   learnSession, STEM_LABELS, STEM_NAMES, VIEW_LABELS, type NoteView,
 } from '../lib/learn';
@@ -327,6 +329,31 @@ function SongView() {
             <Upload size={14} />Import a song or video
           </button>
           {session.error && <div className="page-banner error">{session.error}</div>}
+
+          {session.library.length > 0 && (
+            <div className="learn-library">
+              <small>Songs you&apos;ve separated</small>
+              <div className="learn-library-list">
+                {session.library.map(entry => (
+                  <div key={entry.id} className="learn-library-item">
+                    <button className="learn-library-open" onClick={() => void learnSession.openFromLibrary(entry)}>
+                      <span>
+                        <b>{entry.name}</b>
+                        <small>
+                          {formatTime(entry.duration)} · {noteName(60 + entry.key.root, 'sharp')} {entry.key.mode}
+                        </small>
+                      </span>
+                    </button>
+                    <button
+                      className="icon-btn"
+                      aria-label={`Forget ${entry.name}`}
+                      onClick={() => void learnSession.deleteFromLibrary(entry.id)}
+                    ><Trash2 size={13} /></button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -613,7 +640,7 @@ type WebviewElement = HTMLElement & {
   getURL: () => string;
 };
 
-function YouTubeView() {
+function YouTubeView({ onRecorded }: { onRecorded: () => void }) {
   const { settings, activeNotes, noteOn, noteOff } = useStudio();
   const live = useStore(liveListener);
   const holder = useRef<HTMLDivElement>(null);
@@ -621,6 +648,55 @@ function YouTubeView() {
   const [noteMode, setNoteMode] = useState<NoteLabelMode>('names');
   const [instrument, setInstrument] = useState<'keys' | 'bass' | 'guitar'>('keys');
   const isDesktop = Boolean(window.pianoTutorDesktop?.isDesktop);
+
+  // Recording is kept apart from the live listener: this captures the sound
+  // itself, to be analysed properly once it stops, rather than named as it goes.
+  const capture = useRef<CaptureHandle | null>(null);
+  const [recordState, setRecordState] = useState<'idle' | 'recording' | 'working'>('idle');
+  const [recordError, setRecordError] = useState('');
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    if (recordState !== 'recording') return;
+    const started = Date.now();
+    setElapsed(0);
+    const id = window.setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 250);
+    return () => window.clearInterval(id);
+  }, [recordState]);
+
+  // Leaving the tab mid-recording should not leave the microphone-style
+  // sharing indicator running for a capture nobody will ever stop.
+  useEffect(() => () => { void capture.current?.stop(); }, []);
+
+  const startRecording = async () => {
+    setRecordError('');
+    try {
+      capture.current = await startCapture();
+      setRecordState('recording');
+    } catch (error) {
+      setRecordError(error instanceof Error ? error.message : "The computer's sound could not be captured.");
+    }
+  };
+
+  const stopRecording = async () => {
+    const handle = capture.current;
+    capture.current = null;
+    if (!handle) return;
+    setRecordState('working');
+    try {
+      const blob = await handle.stop();
+      const bytes = await blob.arrayBuffer();
+      const buffer = await audioEngine.ensure().decodeAudioData(bytes);
+      // Two things playing at once helps nobody hear either.
+      liveListener.stop();
+      await learnSession.openFromBuffer(buffer, 'Recorded from YouTube', settings.concertPitch);
+      onRecorded();
+    } catch (error) {
+      setRecordError(error instanceof Error ? error.message : 'That recording could not be analysed.');
+    } finally {
+      setRecordState('idle');
+    }
+  };
 
   const view = () => holder.current?.querySelector('webview') as WebviewElement | null;
 
@@ -680,7 +756,21 @@ function YouTubeView() {
           <button aria-label="Reload" onClick={() => view()?.reload()}><RotateCw size={13} /></button>
           <button aria-label="YouTube home" onClick={() => void view()?.loadURL(YOUTUBE_HOME)}><Home size={13} /></button>
           <span title={address}>{address}</span>
+          {recordState === 'idle' && (
+            <button
+              className="learn-record-btn"
+              title="Record the video's sound, then hear its chords and notes the thorough way — the same analysis an imported song gets, not a live guess"
+              onClick={() => void startRecording()}
+            ><Disc size={13} />Record &amp; analyse</button>
+          )}
+          {recordState === 'recording' && (
+            <button className="learn-record-btn recording" onClick={() => void stopRecording()}>
+              <Circle size={9} fill="currentColor" />{formatTime(elapsed)} · Stop
+            </button>
+          )}
+          {recordState === 'working' && <span className="learn-record-working">Analysing…</span>}
         </div>
+        {recordError && <div className="page-banner error learn-record-error">{recordError}</div>}
         <div className="learn-webview" ref={holder}>
           {createElement('webview', {
             src: YOUTUBE_HOME,
@@ -759,7 +849,7 @@ export function LearnPage() {
           <Tv size={13} />YouTube
         </button>
       </div>
-      {mode === 'song' ? <SongView /> : <YouTubeView />}
+      {mode === 'song' ? <SongView /> : <YouTubeView onRecorded={() => setMode('song')} />}
     </main>
   );
 }

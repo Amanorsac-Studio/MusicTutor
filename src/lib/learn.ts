@@ -17,6 +17,8 @@
 import { learnPlayer } from './player';
 import { estimateKey, recogniseChords, type ChordSegment } from './chordTrack';
 import { transcribe, type RollNote } from './transcribe';
+import type { BeatGrid } from './beats';
+import type { TempoEstimate } from './tempo';
 import type { StemName } from '../types/desktop';
 import type { ChordRequest, ChordResponse } from './analysisWorker';
 
@@ -95,6 +97,26 @@ const VIEW_STEMS: Record<Exclude<NoteView, 'mix'>, StemName[]> = {
 
 export type SongKey = { root: number; mode: 'major' | 'minor' };
 
+/**
+ * A song kept for later, as small facts rather than a second copy of its
+ * audio. Reopening one sums its already-cached stems back into a mix.
+ */
+export type LearnLibraryEntry = {
+  /** The stems' fingerprint; there is no library entry without stems. */
+  id: string;
+  name: string;
+  duration: number;
+  sampleRate: number;
+  tempo: TempoEstimate;
+  grid: BeatGrid;
+  chords: ChordSegment[];
+  chordsFromStems: boolean;
+  key: SongKey;
+  /** Whichever views had already been read when the song was saved. */
+  notes: Partial<Record<NoteView, RollNote[]>>;
+  savedAt?: string;
+};
+
 export type LearnState = {
   fileName: string;
   /** Object URL of the picture, when a video was imported. */
@@ -103,6 +125,10 @@ export type LearnState = {
   working: string;
   progress: number;
   error: string;
+  /** The current song's stem fingerprint, once it has one. */
+  songId: string;
+  /** Songs whose stems are saved and can be reopened without separating again. */
+  library: LearnLibraryEntry[];
   chords: ChordSegment[];
   /** True once the chords have been re-read from the separated bass and keys. */
   chordsFromStems: boolean;
@@ -129,6 +155,11 @@ const initial = (): LearnState => ({
   working: '',
   progress: 0,
   error: '',
+  songId: '',
+  // Not really "initial": callers that reset an in-progress song keep the
+  // library list they already had rather than losing it. Only the very first
+  // state, before anything has been loaded from disk, actually starts empty.
+  library: [],
   chords: [],
   chordsFromStems: false,
   key: { root: 0, mode: 'major' },
@@ -190,6 +221,10 @@ class LearnSession {
   private concertPitch = 440;
   private keyChosen = false;
 
+  constructor() {
+    void this.refreshLibrary();
+  }
+
   get state(): LearnState {
     return this.current;
   }
@@ -224,6 +259,7 @@ class LearnSession {
     this.concertPitch = concertPitch;
     this.set({
       ...initial(),
+      library: this.current.library,
       fileName: file.name.replace(/\.[^.]+$/, ''),
       videoUrl: file.type.startsWith('video/') ? URL.createObjectURL(file) : null,
       working: 'Opening the file',
@@ -234,16 +270,7 @@ class LearnSession {
       if (mine !== this.generation) return;
       const buffer = learnPlayer.audioBuffer;
       if (!buffer) throw new Error('That file has no sound in it.');
-      this.mix = buffer;
-
-      this.set({ working: 'Hearing the chords', progress: 0 });
-      const chords = await chordsInBackground(buffer.getChannelData(0), buffer.sampleRate, track.grid.beats, {
-        concertPitch,
-      });
-      if (mine !== this.generation) return;
-      this.set({ chords, key: estimateKey(chords) });
-
-      await this.detect('mix');
+      await this.analyse(mine, track.grid.beats, buffer, concertPitch);
     } catch (error) {
       if (mine !== this.generation) return;
       this.set({
@@ -255,17 +282,160 @@ class LearnSession {
     }
   }
 
+  /**
+   * Open a song that was captured as sound rather than found as a file — a
+   * recording taken from whatever the computer was playing. From here on it
+   * is treated exactly like an imported file: the same chords, the same
+   * notes, the same loop, speed and separation tools.
+   */
+  async openFromBuffer(buffer: AudioBuffer, name: string, concertPitch = 440): Promise<void> {
+    this.reset();
+    const mine = this.generation;
+    this.concertPitch = concertPitch;
+    this.set({
+      ...initial(),
+      library: this.current.library,
+      fileName: name,
+      working: 'Opening the recording',
+    });
+
+    try {
+      const track = learnPlayer.loadBuffer(buffer, name);
+      if (mine !== this.generation) return;
+      await this.analyse(mine, track.grid.beats, buffer, concertPitch);
+    } catch (error) {
+      if (mine !== this.generation) return;
+      this.set({
+        working: '',
+        error: error instanceof Error && error.message ? error.message : 'That recording could not be analysed.',
+      });
+    }
+  }
+
+  /** The part opening a song has in common, whichever way the sound arrived. */
+  private async analyse(mine: number, beats: number[], buffer: AudioBuffer, concertPitch: number): Promise<void> {
+    this.mix = buffer;
+    this.set({ working: 'Hearing the chords', progress: 0 });
+    const chords = await chordsInBackground(buffer.getChannelData(0), buffer.sampleRate, beats, { concertPitch });
+    if (mine !== this.generation) return;
+    this.set({ chords, key: estimateKey(chords) });
+    await this.detect('mix');
+  }
+
   /** Forget the song. */
   close(): void {
     this.reset();
     learnPlayer.unload();
-    this.set(initial());
+    this.set({ ...initial(), library: this.current.library });
   }
 
   /** Set the key by hand, for when the guess is wrong. */
   setKey(key: SongKey): void {
     this.keyChosen = true;
     this.set({ key });
+  }
+
+  /* ---------------------------------------------------------------- *
+   * The library
+   *
+   * A song only ever gets an entry once it has been separated, because that
+   * is what makes it reopenable without the original file: everything else
+   * needed — the mix — is rebuilt by summing the stems back together.
+   * ---------------------------------------------------------------- */
+
+  /** Read the saved library back from disk. */
+  async refreshLibrary(): Promise<void> {
+    const desktop = window.pianoTutorDesktop;
+    if (!desktop?.listLearnSongs) return;
+    try {
+      const list = await desktop.listLearnSongs() as LearnLibraryEntry[];
+      this.set({ library: list });
+    } catch { /* whatever was already shown stays shown */ }
+  }
+
+  /** Keep the current song's chords, key and notes so far, alongside its stems. */
+  private async saveToLibrary(): Promise<void> {
+    const desktop = window.pianoTutorDesktop;
+    const track = learnPlayer.state.track;
+    const id = this.current.songId;
+    if (!desktop?.saveLearnSong || !track || !id) return;
+    const entry: LearnLibraryEntry = {
+      id,
+      name: this.current.fileName || track.name,
+      duration: track.duration,
+      sampleRate: track.sampleRate,
+      tempo: track.tempo,
+      grid: track.grid,
+      chords: this.current.chords,
+      chordsFromStems: this.current.chordsFromStems,
+      key: this.current.key,
+      notes: Object.fromEntries(this.notesFor) as Partial<Record<NoteView, RollNote[]>>,
+    };
+    try {
+      await desktop.saveLearnSong(entry);
+      await this.refreshLibrary();
+    } catch { /* a song that fails to save can simply be separated again later */ }
+  }
+
+  /** Forget a saved song. Its stems stay cached on disk; only the listing goes. */
+  async deleteFromLibrary(id: string): Promise<void> {
+    const desktop = window.pianoTutorDesktop;
+    if (!desktop?.deleteLearnSong) return;
+    try {
+      await desktop.deleteLearnSong(id);
+      await this.refreshLibrary();
+    } catch { /* leaving a stale entry listed is the worst case */ }
+  }
+
+  /**
+   * Reopen a saved song. Its stems are read back and summed into a mix, the
+   * same way a real bass and keys sum into a band — there is no second copy
+   * of the audio sitting anywhere waiting to be found.
+   */
+  async openFromLibrary(entry: LearnLibraryEntry): Promise<void> {
+    const desktop = window.pianoTutorDesktop;
+    if (!desktop?.stemRead) {
+      this.set({ error: 'Reopening a song needs the installed desktop app.' });
+      return;
+    }
+    this.reset();
+    const mine = this.generation;
+    this.set({
+      ...initial(),
+      library: this.current.library,
+      songId: entry.id,
+      fileName: entry.name,
+      working: 'Opening the song',
+      chords: entry.chords,
+      chordsFromStems: entry.chordsFromStems,
+      key: entry.key,
+    });
+    this.keyChosen = true;
+
+    try {
+      for (const stem of STEM_NAMES) {
+        const bytes = await desktop.stemRead(entry.id, stem);
+        if (mine !== this.generation) return;
+        // Past the 44-byte header, a WAV of this kind is nothing but samples.
+        this.stemData.set(stem, new Int16Array(bytes, 44, Math.floor((bytes.byteLength - 44) / 2)));
+      }
+      const mixBuffer = toBuffer(mixStems(Array.from(this.stemData.values()), 2));
+      this.mix = mixBuffer;
+      learnPlayer.loadBuffer(mixBuffer, entry.name, { tempo: entry.tempo, grid: entry.grid });
+
+      Object.entries(entry.notes).forEach(([view, notes]) => {
+        if (notes) this.notesFor.set(view as NoteView, notes);
+      });
+      this.setStems({ phase: 'ready', progress: 1 });
+      this.set({ working: '', detected: [...this.notesFor.keys()] });
+      this.showNotes(this.notesFor.has('bass') ? 'bass' : 'mix');
+    } catch (error) {
+      if (mine !== this.generation) return;
+      this.set({
+        working: '',
+        error: error instanceof Error ? error.message : "That song's stems could not be found.",
+      });
+    }
   }
 
   /* ---------------------------------------------------------------- *
@@ -360,6 +530,7 @@ class LearnSession {
 
       const result = await desktop.stemSeparate(left.buffer, right.buffer);
       if (mine !== this.generation) return;
+      this.set({ songId: result.id });
 
       this.setStems({ phase: 'loading', progress: 0 });
       for (let i = 0; i < STEM_NAMES.length; i += 1) {
@@ -373,9 +544,11 @@ class LearnSession {
       stop?.();
 
       await this.rehearChords(mine);
-      // The two parts people come here to learn are read without being asked.
+      void this.saveToLibrary();
+      // The two parts people come here to learn are read without being asked,
+      // then the song is kept, so separating it again is never needed.
       void this.detect('bass');
-      void this.detect('keys');
+      void this.detect('keys').then(() => { if (mine === this.generation) void this.saveToLibrary(); });
     } catch (error) {
       if (mine !== this.generation) return;
       const message = error instanceof Error ? error.message : 'Separation failed.';

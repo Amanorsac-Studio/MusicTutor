@@ -84,6 +84,15 @@ export type DesktopBridge = {
   /** One separated stem, as a WAV file's bytes. */
   stemRead?: (id: string, stem: StemName) => Promise<ArrayBuffer>;
   onStemProgress?: (handler: (progress: { stage: 'download' | 'separate'; fraction: number }) => void) => () => void;
+
+  /**
+   * The Learn library. A "song" here is a stem fingerprint plus the facts
+   * around it — its audio is never stored a second time; reopening a song
+   * rebuilds the mix by summing its already-cached stems.
+   */
+  saveLearnSong?: (entry: unknown) => Promise<string>;
+  listLearnSongs?: () => Promise<unknown[]>;
+  deleteLearnSong?: (id: string) => Promise<string>;
 };
 
 declare global {

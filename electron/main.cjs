@@ -403,6 +403,45 @@ app.whenReady().then(() => {
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   });
 
+  /* ---------------------------------------------------------------- *
+   * The Learn library
+   *
+   * Once a song's stems are on disk, everything needed to reopen it — the
+   * mix, rebuilt by summing the stems — is already there. Only the small
+   * facts around it need saving: its name, its chords, its key, the notes
+   * already heard. So a "song" here is a stem fingerprint plus a JSON file
+   * of those facts, never a second copy of the audio.
+   * ---------------------------------------------------------------- */
+
+  const learnLibraryFolder = () => path.join(app.getPath('userData'), 'learn-library');
+
+  ipcMain.handle('learn:save', async (_event, entry) => {
+    const id = String(entry && entry.id || '');
+    if (!/^[0-9a-f]{20}$/.test(id)) throw new Error('A song can only be saved once its stems are ready.');
+    const folder = learnLibraryFolder();
+    await fs.mkdir(folder, { recursive: true });
+    const filePath = path.join(folder, `${id}.json`);
+    const payload = { ...entry, savedAt: new Date().toISOString() };
+    await fs.writeFile(filePath, JSON.stringify(payload), 'utf8');
+    return id;
+  });
+
+  ipcMain.handle('learn:list', async () => {
+    const folder = learnLibraryFolder();
+    await fs.mkdir(folder, { recursive: true });
+    const files = (await fs.readdir(folder)).filter(name => name.endsWith('.json'));
+    const entries = await Promise.all(files.map(async name => {
+      try { return JSON.parse(await fs.readFile(path.join(folder, name), 'utf8')); } catch { return null; }
+    }));
+    return entries.filter(Boolean).sort((a, b) => String(b.savedAt).localeCompare(String(a.savedAt)));
+  });
+
+  ipcMain.handle('learn:delete', async (_event, id) => {
+    if (!/^[0-9a-f]{20}$/.test(String(id))) throw new Error('No such song.');
+    await fs.unlink(path.join(learnLibraryFolder(), `${id}.json`)).catch(() => {});
+    return id;
+  });
+
   ipcMain.handle('settings:load', async () => {
     try {
       return JSON.parse(await fs.readFile(path.join(app.getPath('userData'), 'settings.json'), 'utf8'));

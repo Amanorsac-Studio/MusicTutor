@@ -32,6 +32,9 @@ contextBridge.exposeInMainWorld('pianoTutorDesktop', {
     ipcRenderer.on('stems:progress', listener);
     return () => ipcRenderer.removeListener('stems:progress', listener);
   },
+  saveLearnSong: (entry) => ipcRenderer.invoke('learn:save', entry),
+  listLearnSongs: () => ipcRenderer.invoke('learn:list'),
+  deleteLearnSong: (id) => ipcRenderer.invoke('learn:delete', id),
   streamAvailable: () => ipcRenderer.invoke('stream:available'),
   streamStart: (targets, options) => ipcRenderer.invoke('stream:start', targets, options),
   // `output` names which shape's encoder to act on: 'primary' or 'secondary'.
