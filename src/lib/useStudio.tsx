@@ -20,6 +20,7 @@ import {
   createId, createScene, createSource, layoutFor, normalizeScenes, rescaleLayout, reorderBy, withLayout,
   type Scene, type Source, type SourceKind,
 } from './scene';
+import { defaultScenes, missingDefaultScenes } from './defaultScenes';
 import {
   getFormat, getResolution, renderSize, type OutputFormatId, type QualityLevel,
 } from './formats';
@@ -64,6 +65,8 @@ export type StudioValue = {
   reorderScene: (id: string, direction: 'up' | 'down') => void;
   selectScene: (id: string) => void;
   addScene: (name?: string) => string;
+  /** Bring back any default scene that is not in the list. Returns how many were added. */
+  restoreDefaultScenes: () => number;
   duplicateScene: (id: string) => void;
   renameScene: (id: string, name: string) => void;
   deleteScene: (id: string) => void;
@@ -180,10 +183,10 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     void loadScenes().then(stored => {
       if (cancelled) return;
-      // A fresh install gets one empty scene to work in. Creating it here rather
-      // than in a component effect avoids the new scene being wiped when this
-      // asynchronous load resolves with an empty list.
-      const scenes = stored.scenes.length ? stored.scenes : [createScene('My scene')];
+      // A fresh install starts with the default scenes, PIANO and BASS. Creating
+      // them here rather than in a component effect avoids them being wiped when
+      // this asynchronous load resolves with an empty list.
+      const scenes = stored.scenes.length ? stored.scenes : defaultScenes();
       setScenes(scenes);
       setActiveSceneId(stored.activeSceneId ?? scenes[0]?.id ?? '');
     });
@@ -201,6 +204,13 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     setActiveSceneId(scene.id);
     setSelectedSourceId(null);
     return scene.id;
+  }, []);
+
+  const restoreDefaultScenes = useCallback(() => {
+    const missing = missingDefaultScenes(scenesRef.current);
+    if (!missing.length) return 0;
+    setScenes(current => [...current, ...missing]);
+    return missing.length;
   }, []);
 
   const duplicateScene = useCallback((id: string) => {
@@ -883,7 +893,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     channels, levels, attachInput, detachInput, setChannelGain, setChannelMuted, setChannelSolo, setDuckingTrigger,
     format, setFormat, canvasSize, seedLayoutFrom,
     scenes, activeSceneId, activeScene, sources, reorderScene,
-    selectScene, addScene, duplicateScene, renameScene, deleteScene,
+    selectScene, addScene, restoreDefaultScenes, duplicateScene, renameScene, deleteScene,
     setSceneSources, saveProjectFile, openProjectFile, openProject, updateProject, projectDirty,
     bassNote, bassPosition,
     addSource, updateSource, removeSource, selectedSourceId, setSelectedSourceId,
@@ -896,7 +906,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     setChannelGain, setChannelMuted, setChannelSolo, setDuckingTrigger,
     format, setFormat, canvasSize, seedLayoutFrom,
     scenes, activeSceneId, activeScene, sources, reorderScene,
-    selectScene, addScene, duplicateScene, renameScene, deleteScene,
+    selectScene, addScene, restoreDefaultScenes, duplicateScene, renameScene, deleteScene,
     setSceneSources, saveProjectFile, openProjectFile, openProject, updateProject, projectDirty,
     bassNote, bassPosition,
     addSource, updateSource, removeSource, selectedSourceId,

@@ -44,10 +44,23 @@ function stubAudio() {
   vi.stubGlobal('AudioContext', FakeAudioContext);
 }
 
+/**
+ * A new installation starts with the default PIANO and BASS scenes. Most of
+ * these tests are about editing a scene from nothing, so they begin with one
+ * blank scene already stored, which is what a first launch used to give.
+ */
+function startWithBlankScene() {
+  localStorage.setItem('pianotutor.scenes.v1', JSON.stringify({
+    scenes: [{ id: 'scene_blank', name: 'My scene', layouts: {} }],
+    activeSceneId: 'scene_blank',
+  }));
+}
+
 beforeEach(() => {
   vi.restoreAllMocks();
   // Scenes and settings persist to localStorage, so each test starts clean.
   localStorage.clear();
+  startWithBlankScene();
   stubAudio();
   vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
     // Run a single frame, then stop, so the meter loop does not spin in tests.
@@ -165,10 +178,31 @@ async function addSource(label: RegExp) {
 }
 
 describe('scene editing', () => {
-  it('starts with one empty scene rather than built-in layouts', async () => {
+  it('starts a new installation with the default PIANO and BASS scenes', async () => {
+    localStorage.clear();
+    render(<App />);
+    expect(await screen.findByLabelText('Scene name: PIANO')).toBeInTheDocument();
+    expect(screen.getByLabelText('Scene name: BASS')).toBeInTheDocument();
+    // The first one is open, with its layout already in place.
+    await waitFor(() => expect(layoutCount()).toBeGreaterThan(0));
+  });
+
+  it('keeps the scenes somebody already has instead of adding the defaults', async () => {
     render(<App />);
     expect(await screen.findByText(/Empty scene/)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Scene name: PIANO')).not.toBeInTheDocument();
     expect(layoutCount()).toBe(0);
+  });
+
+  it('brings a deleted default scene back', async () => {
+    render(<App />);
+    expect(await screen.findByText(/Empty scene/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Restore default scenes' }));
+    expect(await screen.findByLabelText('Scene name: PIANO')).toBeInTheDocument();
+    expect(screen.getByLabelText('Scene name: BASS')).toBeInTheDocument();
+    // Asked again, there is nothing left to add.
+    fireEvent.click(screen.getByRole('button', { name: 'Restore default scenes' }));
+    await waitFor(() => expect(screen.getAllByLabelText('Scene name: PIANO')).toHaveLength(1));
   });
 
   it('adds a source and lists it as a layer', async () => {

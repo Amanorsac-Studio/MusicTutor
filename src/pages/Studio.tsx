@@ -49,7 +49,7 @@ export function Studio({ onOpenStream }: { onOpenStream?: () => void } = {}) {
     settings, updateSettings, catalog, activeNotes, noteOn, noteOff, panic, levels,
     channels, attachInput, detachInput,
     recording, elapsedMs, startRecording, stopRecording,
-    scenes, activeScene, activeSceneId, sources, selectScene, addScene, duplicateScene,
+    scenes, activeScene, activeSceneId, sources, selectScene, addScene, restoreDefaultScenes, duplicateScene,
     renameScene, deleteScene, reorderScene, setSceneSources, addSource, updateSource, removeSource,
     selectedSourceId, setSelectedSourceId,
     format, setFormat, canvasSize, seedLayoutFrom, setNotice, bassNote,
@@ -172,7 +172,17 @@ export function Studio({ onOpenStream }: { onOpenStream?: () => void } = {}) {
         {/* Scenes */}
         <div className="panel-heading">
           <span>Scenes</span>
-          <button aria-label="Add scene" onClick={() => addScene()}><Plus size={16} /></button>
+          <span className="panel-heading-actions">
+            <button
+              aria-label="Restore default scenes"
+              title="Bring back the default PIANO and BASS scenes if they were deleted"
+              onClick={() => {
+                const added = restoreDefaultScenes();
+                setNotice(added ? `Restored ${added} default scene${added === 1 ? '' : 's'}.` : 'Both default scenes are already here.');
+              }}
+            ><RotateCcw size={14} /></button>
+            <button aria-label="Add scene" onClick={() => addScene()}><Plus size={16} /></button>
+          </span>
         </div>
         <div className="scene-list">
           {scenes.map((scene, index) => (
