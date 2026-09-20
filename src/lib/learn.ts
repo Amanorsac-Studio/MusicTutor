@@ -14,7 +14,10 @@
  * one that has been muted.
  */
 
+import { audioEngine } from './audioEngine';
 import { learnPlayer } from './player';
+import { isLessonFile, readLesson, type Lesson } from './lessonBundle';
+import { chordsFromNotes, parseMidi } from './midiLesson';
 import { estimateKey, recogniseChords, type ChordSegment } from './chordTrack';
 import { transcribe, type RollNote } from './transcribe';
 import type { BeatGrid } from './beats';
@@ -111,6 +114,8 @@ export type LearnLibraryEntry = {
   grid: BeatGrid;
   chords: ChordSegment[];
   chordsFromStems: boolean;
+  /** True when the notes and chords came from played MIDI rather than from listening. */
+  exact?: boolean;
   key: SongKey;
   /** Whichever views had already been read when the song was saved. */
   notes: Partial<Record<NoteView, RollNote[]>>;
@@ -132,6 +137,11 @@ export type LearnState = {
   chords: ChordSegment[];
   /** True once the chords have been re-read from the separated bass and keys. */
   chordsFromStems: boolean;
+  /**
+   * True for a shared lesson that came with its MIDI: the notes are what was
+   * played and the chords are read from them, not guessed from the sound.
+   */
+  exact: boolean;
   key: SongKey;
   notes: RollNote[];
   view: NoteView;
@@ -162,6 +172,7 @@ const initial = (): LearnState => ({
   library: [],
   chords: [],
   chordsFromStems: false,
+  exact: false,
   key: { root: 0, mode: 'major' },
   notes: [],
   view: 'mix',
@@ -312,6 +323,113 @@ class LearnSession {
     }
   }
 
+  /**
+   * Open a shared lesson: a recording and the MIDI that was played during it.
+   *
+   * The recording supplies the sound, the picture and the beat. The MIDI
+   * supplies everything else, exactly — the notes on the roll are the ones that
+   * were played, and the chords are worked out from them. A lesson that arrives
+   * without MIDI is opened like any other recording and listened to.
+   */
+  async openLesson(lesson: Lesson, concertPitch = 440): Promise<void> {
+    this.reset();
+    const mine = this.generation;
+    this.concertPitch = concertPitch;
+    this.set({
+      ...initial(),
+      library: this.current.library,
+      fileName: lesson.name,
+      videoUrl: URL.createObjectURL(lesson.video),
+      working: 'Opening the lesson',
+    });
+
+    try {
+      let buffer: AudioBuffer;
+      try {
+        buffer = await audioEngine.ensure().decodeAudioData(await lesson.video.arrayBuffer());
+      } catch {
+        throw new Error("This lesson's recording could not be played on this computer.");
+      }
+      if (mine !== this.generation) return;
+      const track = learnPlayer.loadBuffer(buffer, lesson.name);
+      const parsed = lesson.midi ? parseMidi(lesson.midi) : null;
+
+      if (parsed?.notes.length) {
+        this.mix = buffer;
+        const chords = chordsFromNotes(parsed.notes, track.grid.beats, Math.max(buffer.duration, parsed.duration));
+        this.notesFor.set('mix', parsed.notes);
+        this.set({
+          exact: true, chords, key: estimateKey(chords),
+          notes: parsed.notes, detected: ['mix'], working: '',
+        });
+      } else {
+        await this.analyse(mine, track.grid.beats, buffer, concertPitch);
+      }
+    } catch (error) {
+      if (mine !== this.generation) return;
+      this.set({
+        working: '',
+        error: error instanceof Error && error.message ? error.message : 'That lesson could not be opened.',
+      });
+    }
+  }
+
+  /**
+   * Open whatever was dropped or chosen: a lesson file, a recording with its
+   * MIDI beside it, or just a song or video as before.
+   */
+  async openFiles(files: File[], concertPitch = 440): Promise<void> {
+    const isMidi = (file: File) => /\.midi?$/i.test(file.name);
+    const bundle = files.find(file => isLessonFile(file.name));
+    const midi = files.find(isMidi);
+    const media = files.find(file => !isLessonFile(file.name) && !isMidi(file));
+    try {
+      if (bundle) {
+        await this.openLesson(await readLesson(bundle), concertPitch);
+      } else if (media && midi) {
+        await this.openLesson({
+          name: media.name.replace(/\.[^.]+$/, ''),
+          video: media,
+          midi: new Uint8Array(await midi.arrayBuffer()),
+        }, concertPitch);
+      } else if (media) {
+        await this.open(media, concertPitch);
+      } else if (midi) {
+        this.set({ error: 'A MIDI file needs the recording it came with. Drop the video or audio along with it.' });
+      }
+    } catch (error) {
+      this.set({ error: error instanceof Error && error.message ? error.message : 'That lesson could not be opened.' });
+    }
+  }
+
+  /** Open a lesson file the operating system handed to the app. */
+  async openLessonPath(filePath: string, concertPitch = 440): Promise<void> {
+    const desktop = window.pianoTutorDesktop;
+    if (!desktop?.readLesson) return;
+    try {
+      const { name, bytes } = await desktop.readLesson(filePath);
+      await this.openLesson(await readLesson(new File([bytes], name)), concertPitch);
+    } catch (error) {
+      this.set({ error: error instanceof Error && error.message ? error.message : 'That lesson could not be opened.' });
+    }
+  }
+
+  /** Open one of your own recordings the way a student would see it. */
+  async openRecording(videoPath: string, concertPitch = 440): Promise<void> {
+    const desktop = window.pianoTutorDesktop;
+    if (!desktop?.readRecordingLesson) return;
+    try {
+      const recording = await desktop.readRecordingLesson(videoPath);
+      await this.openLesson({
+        name: recording.name,
+        video: new Blob([recording.video], { type: recording.type }),
+        midi: recording.midi ? new Uint8Array(recording.midi) : null,
+      }, concertPitch);
+    } catch (error) {
+      this.set({ error: error instanceof Error && error.message ? error.message : 'That recording could not be opened.' });
+    }
+  }
+
   /** The part opening a song has in common, whichever way the sound arrived. */
   private async analyse(mine: number, beats: number[], buffer: AudioBuffer, concertPitch: number): Promise<void> {
     this.mix = buffer;
@@ -368,6 +486,7 @@ class LearnSession {
       grid: track.grid,
       chords: this.current.chords,
       chordsFromStems: this.current.chordsFromStems,
+      exact: this.current.exact,
       key: this.current.key,
       notes: Object.fromEntries(this.notesFor) as Partial<Record<NoteView, RollNote[]>>,
     };
@@ -408,6 +527,7 @@ class LearnSession {
       working: 'Opening the song',
       chords: entry.chords,
       chordsFromStems: entry.chordsFromStems,
+      exact: Boolean(entry.exact),
       key: entry.key,
     });
     this.keyChosen = true;
@@ -543,12 +663,18 @@ class LearnSession {
       this.setStems({ phase: 'ready', progress: 1 });
       stop?.();
 
-      await this.rehearChords(mine);
-      void this.saveToLibrary();
-      // The two parts people come here to learn are read without being asked,
-      // then the song is kept, so separating it again is never needed.
-      void this.detect('bass');
-      void this.detect('keys').then(() => { if (mine === this.generation) void this.saveToLibrary(); });
+      if (this.current.exact) {
+        // The notes and chords are already what was played. Listening to the
+        // separated parts would only replace them with a guess.
+        void this.saveToLibrary();
+      } else {
+        await this.rehearChords(mine);
+        void this.saveToLibrary();
+        // The two parts people come here to learn are read without being asked,
+        // then the song is kept, so separating it again is never needed.
+        void this.detect('bass');
+        void this.detect('keys').then(() => { if (mine === this.generation) void this.saveToLibrary(); });
+      }
     } catch (error) {
       if (mine !== this.generation) return;
       const message = error instanceof Error ? error.message : 'Separation failed.';

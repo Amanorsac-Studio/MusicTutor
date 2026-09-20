@@ -277,8 +277,8 @@ function SongView() {
     ? CHORD_SHAPES[chord.quality].map(interval => (((chord.root + interval + transpose) % 12) + 12) % 12)
     : undefined;
 
-  const onFile = (file: File) => {
-    void learnSession.open(file, settings.concertPitch);
+  const onFiles = (files: File[]) => {
+    if (files.length) void learnSession.openFiles(files, settings.concertPitch);
   };
 
   const bassLine = session.view === 'bass';
@@ -298,12 +298,12 @@ function SongView() {
       <input
         ref={fileRef}
         type="file"
-        accept="audio/*,video/*"
+        multiple
+        accept="audio/*,video/*,.mid,.midi,.musictutor-lesson"
         aria-label="Import a song or video"
         style={{ display: 'none' }}
         onChange={event => {
-          const file = event.target.files?.[0];
-          if (file) onFile(file);
+          onFiles(Array.from(event.target.files ?? []));
           event.target.value = '';
         }}
       />
@@ -314,8 +314,7 @@ function SongView() {
           onDragOver={event => event.preventDefault()}
           onDrop={event => {
             event.preventDefault();
-            const file = event.dataTransfer.files?.[0];
-            if (file) onFile(file);
+            onFiles(Array.from(event.dataTransfer.files ?? []));
           }}
         >
           <FileAudio size={34} />
@@ -325,8 +324,13 @@ function SongView() {
             laid out on a piano roll, and you can loop, slow down and transpose
             any part of it. Everything is worked out on this computer.
           </p>
+          <p>
+            Got a lesson from your teacher? Drop that here too — a lesson file, or a
+            recording together with its MIDI. Then the notes on the roll are the ones
+            that were actually played.
+          </p>
           <button className="primary small" onClick={() => fileRef.current?.click()}>
-            <Upload size={14} />Import a song or video
+            <Upload size={14} />Open a song, video or lesson
           </button>
           {session.error && <div className="page-banner error">{session.error}</div>}
 
@@ -372,7 +376,9 @@ function SongView() {
                 <video ref={videoRef} className="learn-video" src={session.videoUrl} muted playsInline />
               )}
               <div className="learn-chord" aria-live="off">
-                <small>Chord now{session.chordsFromStems ? ' · from bass and keys' : ''}</small>
+                <small>
+                  Chord now{session.exact ? " · from the lesson's MIDI" : session.chordsFromStems ? ' · from bass and keys' : ''}
+                </small>
                 <strong>{chord ? chordLabel(chord, spelling, transpose) : '—'}</strong>
                 <span>{nextChord ? `Next: ${chordLabel(nextChord, spelling, transpose)}` : ' '}</span>
               </div>
@@ -388,6 +394,11 @@ function SongView() {
                     <span>{session.working}…</span>
                     <i><em style={{ width: `${Math.round(session.progress * 100)}%` }} /></i>
                   </div>
+                )}
+                {session.exact && (
+                  <small className="learn-exact">
+                    Exact notes — played, not guessed. The chords are read from them.
+                  </small>
                 )}
                 {!busy && !waitingForNotes && !session.notes.length && (
                   <small className="learn-quiet">No clear notes were heard in this part.</small>

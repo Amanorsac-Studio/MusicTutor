@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Check, Clock3, FileVideo, FolderOpen, Library, Music2, Pencil, Play, Plus, RotateCcw, Trash2, X } from 'lucide-react';
+import {
+  Check, Clock3, FileVideo, FolderOpen, GraduationCap, Library, Music2, Pencil, Play, Plus, RotateCcw, Share2, Trash2, X,
+} from 'lucide-react';
 import { useStudio } from '../lib/useStudio';
 import { formatBytes, formatDateTime } from '../lib/settings';
 import type { ProjectSummary, RecordingSummary } from '../types/desktop';
 
 type Tab = 'Projects' | 'Recordings';
 
-export function LibraryPage() {
+export function LibraryPage({ onStudy }: { onStudy?: (videoPath: string) => void }) {
   const {
     settings, setNotice, saveProjectFile, openProjectFile, scenes,
     openProject, updateProject, projectDirty,
@@ -100,6 +102,19 @@ export function LibraryPage() {
   };
 
   const open = (target: string) => { void window.pianoTutorDesktop?.openPath(target); };
+
+  /** Pack a recording with its MIDI into one file that can be sent to a student. */
+  const share = async (videoPath: string) => {
+    try {
+      const result = await window.pianoTutorDesktop?.shareLesson?.(videoPath);
+      if (!result) return;
+      setNotice(result.withMidi
+        ? 'Lesson saved. Send that one file to your student.'
+        : 'Lesson saved, but this recording has no MIDI with it. The student will get the video only.');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'That lesson could not be saved.');
+    }
+  };
   const isMidi = (name: string) => /\.mid$/i.test(name);
 
   const empty = !status && ((tab === 'Projects' && !projects.length) || (tab === 'Recordings' && !recordings.length));
@@ -277,6 +292,22 @@ export function LibraryPage() {
               </span>
               <span>{formatDateTime(recording.createdAt, settings.locale)}</span>
               <span className="row-actions">
+                {!isMidi(recording.name) && (
+                  <>
+                    <button
+                      aria-label={`Share ${recording.name} as a lesson`}
+                      title="Share as a lesson: the video and its MIDI in one file"
+                      onClick={() => void share(recording.filePath)}
+                    ><Share2 size={15} /></button>
+                    {onStudy && (
+                      <button
+                        aria-label={`Study ${recording.name} in Learn`}
+                        title="Study it in the Learn tab, the way a student would"
+                        onClick={() => onStudy(recording.filePath)}
+                      ><GraduationCap size={15} /></button>
+                    )}
+                  </>
+                )}
                 <button aria-label={`Open ${recording.name}`} onClick={() => open(recording.filePath)}><Play /></button>
                 {confirming === recording.filePath ? (
                   <>

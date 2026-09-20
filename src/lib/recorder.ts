@@ -274,7 +274,7 @@ export class LessonRecorder {
         const midiBytes = this.midi.build();
         // Copy into a standalone ArrayBuffer for structured-clone over IPC.
         const midiBuffer = midiBytes.slice().buffer as ArrayBuffer;
-        midiPath = await desktop.saveMidi(midiBuffer, name).catch(() => undefined);
+        midiPath = await desktop.saveMidi(midiBuffer, name, videoPath).catch(() => undefined);
       }
     }
 

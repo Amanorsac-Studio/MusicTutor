@@ -30,7 +30,8 @@ export type DesktopBridge = {
   maximize: () => void;
   close: () => void;
   saveRecording: (bytes: ArrayBuffer, name: string, extension?: string) => Promise<string>;
-  saveMidi?: (bytes: ArrayBuffer, name: string) => Promise<string>;
+  /** `pairedVideo` names the recording this MIDI belongs to, so they can be found together. */
+  saveMidi?: (bytes: ArrayBuffer, name: string, pairedVideo?: string) => Promise<string>;
   saveProject: (project: unknown) => Promise<string>;
   listProjects: () => Promise<ProjectSummary[]>;
   /** Read a saved project back. Restricted to the projects folder. */
@@ -90,6 +91,18 @@ export type DesktopBridge = {
    * around it — its audio is never stored a second time; reopening a song
    * rebuilds the mix by summing its already-cached stems.
    */
+  /** Pack a recording and its MIDI into one file, asking where to put it. Null if cancelled. */
+  shareLesson?: (videoPath: string) => Promise<{ path: string; withMidi: boolean } | null>;
+  /** The bytes of a lesson file somebody sent. Only lesson files can be read this way. */
+  readLesson?: (filePath: string) => Promise<{ name: string; bytes: ArrayBuffer }>;
+  /** A recording of your own, with its MIDI, to study as a student would. */
+  readRecordingLesson?: (videoPath: string) => Promise<{
+    name: string; type: string; video: ArrayBuffer; midi: ArrayBuffer | null;
+  }>;
+  /** A lesson the app was started by opening, once. */
+  takePendingLesson?: () => Promise<string | null>;
+  /** A lesson opened while the app was already running. */
+  onOpenLesson?: (handler: (filePath: string) => void) => () => void;
   saveLearnSong?: (entry: unknown) => Promise<string>;
   listLearnSongs?: () => Promise<unknown[]>;
   deleteLearnSong?: (id: string) => Promise<string>;

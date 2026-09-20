@@ -1,9 +1,10 @@
-const { app, BrowserWindow, ipcMain, session, desktopCapturer, shell, utilityProcess } = require('electron');
+const { app, BrowserWindow, ipcMain, session, desktopCapturer, shell, utilityProcess, dialog } = require('electron');
 const fs = require('fs/promises');
 const path = require('path');
 const { Streamer, ffmpegPath } = require('./streamer.cjs');
 const { scanPlugins, launchPlugin } = require('./plugins.cjs');
 const { StemSeparator, STEMS } = require('./stems.cjs');
+const { writeLesson, EXTENSION: LESSON_EXTENSION } = require('./lessonBundle.cjs');
 
 /** The last scan, so a launch can only ever start something we found. */
 let knownPlugins = [];
@@ -75,6 +76,35 @@ function insideLibrary(target, folder) {
   return resolved;
 }
 
+/** A lesson file named on the command line, if the app was started by opening one. */
+const lessonFromArguments = args => args.find(arg => String(arg).toLowerCase().endsWith(LESSON_EXTENSION)) || null;
+
+/** Waits here until the window is up and asks for it. */
+let pendingLesson = lessonFromArguments(process.argv);
+
+/**
+ * The MIDI that was played during a recording.
+ *
+ * New recordings save their MIDI under the video's own name. Older ones were
+ * saved with a timestamp a moment apart, so those are matched by name and by
+ * having been written within seconds of the video.
+ */
+async function findMidiFor(videoPath) {
+  const exact = videoPath.replace(/\.[^./\\]+$/, '.mid');
+  if (await fs.access(exact).then(() => true, () => false)) return exact;
+  const folder = path.dirname(videoPath);
+  const stamp = /_\d{4}-\d{2}-\d{2}T.*$/;
+  const stem = path.basename(videoPath).replace(/\.[^.]+$/, '').replace(stamp, '');
+  const videoTime = (await fs.stat(videoPath)).mtimeMs;
+  let best = null;
+  for (const name of await fs.readdir(folder)) {
+    if (!/\.mid$/i.test(name) || name.replace(/\.mid$/i, '').replace(stamp, '') !== stem) continue;
+    const gap = Math.abs((await fs.stat(path.join(folder, name))).mtimeMs - videoTime);
+    if (gap <= 15000 && (!best || gap < best.gap)) best = { name, gap };
+  }
+  return best ? path.join(folder, best.name) : null;
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1536,
@@ -109,7 +139,28 @@ function createWindow() {
 // finds the old data already in place.
 migrateFromPianoTutor();
 
+// Opening a lesson file while the app is already running would otherwise start
+// a second copy. Hand it to the first one instead.
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', (_event, argv) => {
+    const lesson = lessonFromArguments(argv);
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+      if (lesson) mainWindow.webContents.send('lesson:open', lesson);
+    } else if (lesson) {
+      pendingLesson = lesson;
+    }
+  });
+}
+
 app.whenReady().then(() => {
+  // The copy that was turned away has nothing to start.
+  if (!gotLock) return;
+
   // Grant the capture permissions the studio needs. Everything else is denied.
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
     callback(['media', 'midi', 'midiSysex', 'audioCapture', 'videoCapture'].includes(permission));
@@ -193,10 +244,14 @@ app.whenReady().then(() => {
     return filePath;
   });
 
-  ipcMain.handle('midi:save', async (_event, bytes, suggestedName) => {
+  ipcMain.handle('midi:save', async (_event, bytes, suggestedName, pairedVideo) => {
     const folder = recordingsFolder();
     await fs.mkdir(folder, { recursive: true });
-    const filePath = path.join(folder, `${safeFileName(suggestedName, 'MusicTutor_Lesson')}_${timestamp()}.mid`);
+    // Saved under the video's own name when there is one, so the two can always
+    // be found together again.
+    const filePath = pairedVideo
+      ? insideLibrary(pairedVideo, folder).replace(/\.[^./\\]+$/, '.mid')
+      : path.join(folder, `${safeFileName(suggestedName, 'MusicTutor_Lesson')}_${timestamp()}.mid`);
     await fs.writeFile(filePath, Buffer.from(bytes));
     return filePath;
   });
@@ -401,6 +456,61 @@ app.whenReady().then(() => {
     if (!/^[0-9a-f]{20}$/.test(String(id)) || !STEMS.includes(stem)) throw new Error('No such stem.');
     const bytes = await fs.readFile(stemFiles.cacheFor(id).files[stem]);
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  });
+
+  /* ---------------------------------------------------------------- *
+   * Shared lessons
+   * ---------------------------------------------------------------- */
+
+  const lessonName = videoPath =>
+    path.basename(videoPath).replace(/\.[^.]+$/, '').replace(/_\d{4}-\d{2}-\d{2}T.*$/, '').replace(/_/g, ' ').trim() || 'Lesson';
+
+  // Pack a recording and its MIDI into one file to send. The person chooses
+  // where it goes; nothing is written anywhere they did not pick.
+  ipcMain.handle('lesson:share', async (_event, videoPath) => {
+    const video = insideLibrary(videoPath, recordingsFolder());
+    const midi = await findMidiFor(video);
+    const name = lessonName(video);
+    const chosen = await dialog.showSaveDialog(mainWindow, {
+      title: 'Share this lesson',
+      defaultPath: path.join(app.getPath('documents'), `${safeFileName(name, 'Lesson')}${LESSON_EXTENSION}`),
+      filters: [{ name: 'MusicTutor lesson', extensions: [LESSON_EXTENSION.slice(1)] }],
+    });
+    if (chosen.canceled || !chosen.filePath) return null;
+    const target = chosen.filePath.toLowerCase().endsWith(LESSON_EXTENSION) ? chosen.filePath : chosen.filePath + LESSON_EXTENSION;
+    await writeLesson(target, { name, videoPath: video, midiPath: midi });
+    shell.showItemInFolder(target);
+    return { path: target, withMidi: Boolean(midi) };
+  });
+
+  // A lesson file somebody sent, opened through the operating system. Only
+  // lesson files can be read this way, whatever path is asked for.
+  ipcMain.handle('lesson:read', async (_event, filePath) => {
+    const resolved = path.resolve(String(filePath ?? ''));
+    if (!resolved.toLowerCase().endsWith(LESSON_EXTENSION)) throw new Error('That is not a lesson file.');
+    const bytes = await fs.readFile(resolved);
+    return { name: path.basename(resolved), bytes: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) };
+  });
+
+  // The teacher's own recording, to try it in the Learn tab as a student would.
+  ipcMain.handle('lesson:read-recording', async (_event, videoPath) => {
+    const video = insideLibrary(videoPath, recordingsFolder());
+    const midi = await findMidiFor(video);
+    const [videoBytes, midiBytes] = await Promise.all([fs.readFile(video), midi ? fs.readFile(midi) : null]);
+    const slice = buffer => buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+    return {
+      name: lessonName(video),
+      type: /\.mp4$/i.test(video) ? 'video/mp4' : 'video/webm',
+      video: slice(videoBytes),
+      midi: midiBytes ? slice(midiBytes) : null,
+    };
+  });
+
+  // Asked once by the window when it starts, for a lesson it was opened with.
+  ipcMain.handle('lesson:pending', async () => {
+    const path_ = pendingLesson;
+    pendingLesson = null;
+    return path_;
   });
 
   /* ---------------------------------------------------------------- *

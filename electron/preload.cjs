@@ -6,7 +6,7 @@ contextBridge.exposeInMainWorld('pianoTutorDesktop', {
   maximize: () => ipcRenderer.send('window:maximize'),
   close: () => ipcRenderer.send('window:close'),
   saveRecording: (bytes, name, extension) => ipcRenderer.invoke('recording:save', bytes, name, extension),
-  saveMidi: (bytes, name) => ipcRenderer.invoke('midi:save', bytes, name),
+  saveMidi: (bytes, name, pairedVideo) => ipcRenderer.invoke('midi:save', bytes, name, pairedVideo),
   saveProject: (project) => ipcRenderer.invoke('project:save', project),
   listProjects: () => ipcRenderer.invoke('project:list'),
   readProject: (filePath) => ipcRenderer.invoke('project:read', filePath),
@@ -31,6 +31,15 @@ contextBridge.exposeInMainWorld('pianoTutorDesktop', {
     const listener = (_event, progress) => handler(progress);
     ipcRenderer.on('stems:progress', listener);
     return () => ipcRenderer.removeListener('stems:progress', listener);
+  },
+  shareLesson: (videoPath) => ipcRenderer.invoke('lesson:share', videoPath),
+  readLesson: (filePath) => ipcRenderer.invoke('lesson:read', filePath),
+  readRecordingLesson: (videoPath) => ipcRenderer.invoke('lesson:read-recording', videoPath),
+  takePendingLesson: () => ipcRenderer.invoke('lesson:pending'),
+  onOpenLesson: (handler) => {
+    const listener = (_event, filePath) => handler(filePath);
+    ipcRenderer.on('lesson:open', listener);
+    return () => ipcRenderer.removeListener('lesson:open', listener);
   },
   saveLearnSong: (entry) => ipcRenderer.invoke('learn:save', entry),
   listLearnSongs: () => ipcRenderer.invoke('learn:list'),

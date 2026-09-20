@@ -12,6 +12,7 @@ import { SettingsPage } from './pages/SettingsPage';
 import { StreamPage } from './pages/StreamPage';
 import { LearnPage } from './pages/LearnPage';
 import { learnPlayer, trackPlayer } from './lib/player';
+import { learnSession } from './lib/learn';
 import { formatDuration } from './lib/settings';
 
 type Workspace = 'Studio' | 'Learn' | 'Devices' | 'Mixer' | 'Stream' | 'Library' | 'Settings';
@@ -44,6 +45,20 @@ function Shell() {
   } = useStudio();
 
   const desktop = window.pianoTutorDesktop;
+
+  // A lesson file opened from outside the app — double-clicked in a folder, or
+  // opened while the app was already running — goes straight to the Learn tab.
+  const concertPitch = settings.concertPitch;
+  useEffect(() => {
+    const bridge = window.pianoTutorDesktop;
+    if (!bridge?.onOpenLesson) return;
+    const open = (filePath: string) => {
+      setWorkspace('Learn');
+      void learnSession.openLessonPath(filePath, concertPitch);
+    };
+    void bridge.takePendingLesson?.().then(filePath => { if (filePath) open(filePath); });
+    return bridge.onOpenLesson(open);
+  }, [concertPitch]);
 
   // Global shortcuts. Each ignores keystrokes aimed at a text field.
   useEffect(() => {
@@ -146,7 +161,14 @@ function Shell() {
       {workspace === 'Devices' && <Devices />}
       {workspace === 'Mixer' && <Mixer />}
       {workspace === 'Stream' && <StreamPage />}
-      {workspace === 'Library' && <LibraryPage />}
+      {workspace === 'Library' && (
+        <LibraryPage
+          onStudy={path => {
+            setWorkspace('Learn');
+            void learnSession.openRecording(path, settings.concertPitch);
+          }}
+        />
+      )}
       {workspace === 'Settings' && <SettingsPage />}
 
       {notice && (

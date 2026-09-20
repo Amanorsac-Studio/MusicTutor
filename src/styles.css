@@ -634,3 +634,4 @@ input,textarea,.chat-line,.field-path,.selectable,[contenteditable]{user-select:
 .learn-solo:hover{background:#173250;color:#fff}
 .learn-instruments{margin:6px 0 0}
 .learn-live-side{justify-content:flex-start}
+.learn-status .learn-exact{color:#7fe0b0}

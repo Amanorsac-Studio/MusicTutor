@@ -475,68 +475,23 @@ export type ChordOptions = {
   onProgress?: (fraction: number) => void;
 };
 
+/** One stretch of time and how well each chord explains it; null is silence. */
+export type ChordSlice = { start: number; end: number; scores: Float32Array | null };
+
+/** A slice that says nothing either way, so the chord before it carries on. */
+export const undecidedSlice = (start: number, end: number): ChordSlice =>
+  ({ start, end, scores: new Float32Array(VOCABULARY.length) });
+
 /**
- * Name the chords of a recording.
+ * Turn scored slices into chords.
  *
- * `beats` are the tracked beat times. One chord is decided per beat, then runs
- * of the same chord are joined. With no beats to go on, half-second slices are
- * used instead, which is cruder but still works.
+ * The part that does not care where the evidence came from — a recording's
+ * spectrum or a played MIDI file's exact notes — so both are decided the same
+ * way, with the same steadiness and the same lean toward the song's key.
  */
-export function recogniseChords(
-  samples: Float32Array, sampleRate: number, beats: number[], options: ChordOptions = {},
+export function decodeSlices(
+  slices: ChordSlice[], options: { stickiness?: number; keyPrior?: boolean } = {},
 ): ChordSegment[] {
-  const duration = samples.length / sampleRate;
-  if (samples.length < CHROMA_WINDOW) return [];
-  const chroma = chromagram(samples, sampleRate, options.concertPitch ?? 440, options.onProgress);
-  const separated = options.bassSamples && options.bassSamples.length >= CHROMA_WINDOW
-    ? chromagram(options.bassSamples, sampleRate, options.concertPitch ?? 440)
-    : null;
-  const bassRows = separated ? separated.bass : chroma.bass;
-  // A clean bass line names the root more reliably than a band's low end, but
-  // only a little more weight is safe: bass players walk, and a passing fifth
-  // trusted too far renames the chord for a beat.
-  const bassWeight = separated ? 0.2 : 0.16;
-
-  // Slice boundaries: the beats, extended to cover the start and the end.
-  let edges = beats.filter(beat => beat > 0 && beat < duration);
-  if (edges.length < 4) {
-    edges = [];
-    for (let t = 0.5; t < duration; t += 0.5) edges.push(t);
-  }
-  edges = [0, ...edges, duration];
-
-  // A frame far quieter than the track's norm is silence, not a chord.
-  const sorted = Array.from(chroma.energy).sort((a, b) => a - b);
-  const typical = sorted[Math.floor(sorted.length * 0.6)] || 0;
-  const quiet = typical * 0.02;
-
-  const slices: Array<{ start: number; end: number; scores: Float32Array | null }> = [];
-  for (let i = 0; i + 1 < edges.length; i += 1) {
-    const start = edges[i];
-    const end = edges[i + 1];
-    if (end - start < 0.05) continue;
-    const [from, to] = frameRange(chroma, chroma.energy.length, start, end);
-    let level = 0;
-    for (let frame = from; frame < to; frame += 1) level += chroma.energy[frame];
-    level /= Math.max(1, to - from);
-    if (level <= quiet) {
-      slices.push({ start, end, scores: null });
-      continue;
-    }
-    const harmony = averageBetween(chroma.harmony, from, to);
-    // A drum break or a noisy gap gives no evidence either way, so the chord
-    // before it simply carries on rather than being replaced by a guess.
-    if (peakiness(harmony) < PITCHED_THRESHOLD) {
-      slices.push({ start, end, scores: new Float32Array(VOCABULARY.length) });
-      continue;
-    }
-    slices.push({
-      start, end,
-      scores: scoreFrame(harmony, averageBetween(bassRows, from, to), bassWeight),
-    });
-  }
-  if (!slices.length) return [];
-
   /*
    * Choose the best path through the slices, where changing chord costs
    * something. This is what removes one-beat flickers: a brief better match
@@ -611,6 +566,73 @@ export function recogniseChords(
     });
     segments = join(bestPath(favour));
   }
+
+  return segments;
+}
+
+/**
+ * Name the chords of a recording.
+ *
+ * `beats` are the tracked beat times. One chord is decided per beat, then runs
+ * of the same chord are joined. With no beats to go on, half-second slices are
+ * used instead, which is cruder but still works.
+ */
+export function recogniseChords(
+  samples: Float32Array, sampleRate: number, beats: number[], options: ChordOptions = {},
+): ChordSegment[] {
+  const duration = samples.length / sampleRate;
+  if (samples.length < CHROMA_WINDOW) return [];
+  const chroma = chromagram(samples, sampleRate, options.concertPitch ?? 440, options.onProgress);
+  const separated = options.bassSamples && options.bassSamples.length >= CHROMA_WINDOW
+    ? chromagram(options.bassSamples, sampleRate, options.concertPitch ?? 440)
+    : null;
+  const bassRows = separated ? separated.bass : chroma.bass;
+  // A clean bass line names the root more reliably than a band's low end, but
+  // only a little more weight is safe: bass players walk, and a passing fifth
+  // trusted too far renames the chord for a beat.
+  const bassWeight = separated ? 0.2 : 0.16;
+
+  // Slice boundaries: the beats, extended to cover the start and the end.
+  let edges = beats.filter(beat => beat > 0 && beat < duration);
+  if (edges.length < 4) {
+    edges = [];
+    for (let t = 0.5; t < duration; t += 0.5) edges.push(t);
+  }
+  edges = [0, ...edges, duration];
+
+  // A frame far quieter than the track's norm is silence, not a chord.
+  const sorted = Array.from(chroma.energy).sort((a, b) => a - b);
+  const typical = sorted[Math.floor(sorted.length * 0.6)] || 0;
+  const quiet = typical * 0.02;
+
+  const slices: ChordSlice[] = [];
+  for (let i = 0; i + 1 < edges.length; i += 1) {
+    const start = edges[i];
+    const end = edges[i + 1];
+    if (end - start < 0.05) continue;
+    const [from, to] = frameRange(chroma, chroma.energy.length, start, end);
+    let level = 0;
+    for (let frame = from; frame < to; frame += 1) level += chroma.energy[frame];
+    level /= Math.max(1, to - from);
+    if (level <= quiet) {
+      slices.push({ start, end, scores: null });
+      continue;
+    }
+    const harmony = averageBetween(chroma.harmony, from, to);
+    // A drum break or a noisy gap gives no evidence either way, so the chord
+    // before it simply carries on rather than being replaced by a guess.
+    if (peakiness(harmony) < PITCHED_THRESHOLD) {
+      slices.push(undecidedSlice(start, end));
+      continue;
+    }
+    slices.push({
+      start, end,
+      scores: scoreFrame(harmony, averageBetween(bassRows, from, to), bassWeight),
+    });
+  }
+  if (!slices.length) return [];
+
+  const segments = decodeSlices(slices, options);
 
   // Where the bass sits on a chord note that is not the root, say so: D♭/F.
   segments.forEach(segment => {
