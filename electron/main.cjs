@@ -562,7 +562,23 @@ app.whenReady().then(() => {
 
   ipcMain.handle('settings:save', async (_event, value) => {
     const filePath = path.join(app.getPath('userData'), 'settings.json');
-    await fs.writeFile(filePath, JSON.stringify(value, null, 2), 'utf8');
+    let next = value;
+    // Settings and scenes share this file. A save that carries only settings
+    // — one preference changed — must not throw the scenes away, which is
+    // what happened when it landed after the save that carried both.
+    if (next && typeof next === 'object' && !('scenes' in next)) {
+      try {
+        const existing = JSON.parse(await fs.readFile(filePath, 'utf8'));
+        if (Array.isArray(existing.scenes)) {
+          next = { ...next, scenes: existing.scenes, activeSceneId: existing.activeSceneId };
+        }
+      } catch { /* nothing saved yet, or unreadable: nothing to keep */ }
+    }
+    // Written aside and renamed into place, so being closed mid-write can never
+    // leave half a file where the whole one was.
+    const partial = `${filePath}.part`;
+    await fs.writeFile(partial, JSON.stringify(next, null, 2), 'utf8');
+    await fs.rename(partial, filePath);
     return filePath;
   });
 

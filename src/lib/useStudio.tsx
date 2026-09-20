@@ -168,12 +168,22 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const persistSettings = useCallback(
-    () => savePersisted(settingsRef.current, { scenes: scenesRef.current, activeSceneId: activeSceneIdRef.current }),
+    async () => {
+      // Before the scenes are read there is nothing of theirs to save; writing
+      // now would replace them with the empty list.
+      if (!scenesLoadedRef.current) return saveSettings(settingsRef.current);
+      return savePersisted(settingsRef.current, { scenes: scenesRef.current, activeSceneId: activeSceneIdRef.current });
+    },
     [],
   );
 
   /* -------------------------------------------------- scenes --------- */
 
+  // Scenes are only saved once they have been read. Saving before that would
+  // write the empty list the state starts as over the scenes on disk.
+  const [scenesLoaded, setScenesLoaded] = useState(false);
+  const scenesLoadedRef = useRef(false);
+  scenesLoadedRef.current = scenesLoaded;
   const scenesRef = useRef(scenes);
   scenesRef.current = scenes;
   const activeSceneIdRef = useRef(activeSceneId);
@@ -183,6 +193,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     void loadScenes().then(stored => {
       if (cancelled) return;
+      setScenesLoaded(true);
       // A fresh install starts with the default scenes, PIANO and BASS. Creating
       // them here rather than in a component effect avoids them being wiped when
       // this asynchronous load resolves with an empty list.
@@ -586,12 +597,12 @@ export function StudioProvider({ children }: { children: ReactNode }) {
 
   // Autosave scene edits, debounced so dragging a source does not thrash disk.
   useEffect(() => {
-    if (!settingsLoaded || !settings.autosave) return;
+    if (!settingsLoaded || !scenesLoaded || !settings.autosave) return;
     const id = window.setTimeout(() => {
       void savePersisted(settingsRef.current, { scenes: scenesRef.current, activeSceneId: activeSceneIdRef.current });
     }, 700);
     return () => window.clearTimeout(id);
-  }, [scenes, activeSceneId, settingsLoaded, settings.autosave]);
+  }, [scenes, activeSceneId, settingsLoaded, scenesLoaded, settings.autosave]);
 
   // Push settings that the audio engine needs to know about.
   useEffect(() => {
