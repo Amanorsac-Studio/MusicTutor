@@ -32,6 +32,8 @@ contextBridge.exposeInMainWorld('pianoTutorDesktop', {
     ipcRenderer.on('stems:progress', listener);
     return () => ipcRenderer.removeListener('stems:progress', listener);
   },
+  betaStatus: () => ipcRenderer.invoke('beta:status'),
+  betaActivate: (key) => ipcRenderer.invoke('beta:activate', key),
   shareLesson: (videoPath) => ipcRenderer.invoke('lesson:share', videoPath),
   readLesson: (filePath) => ipcRenderer.invoke('lesson:read', filePath),
   readRecordingLesson: (videoPath) => ipcRenderer.invoke('lesson:read-recording', videoPath),

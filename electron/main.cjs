@@ -5,6 +5,7 @@ const { Streamer, ffmpegPath } = require('./streamer.cjs');
 const { scanPlugins, launchPlugin } = require('./plugins.cjs');
 const { StemSeparator, STEMS } = require('./stems.cjs');
 const { writeLesson, EXTENSION: LESSON_EXTENSION } = require('./lessonBundle.cjs');
+const { BetaGate } = require('./beta.cjs');
 
 /** The last scan, so a launch can only ever start something we found. */
 let knownPlugins = [];
@@ -258,6 +259,11 @@ app.whenReady().then(() => {
   // Fullscreen is the one thing a video player reasonably asks for.
   tube.setPermissionRequestHandler((_wc, permission, callback) => callback(permission === 'fullscreen'));
   tube.setPermissionCheckHandler((_wc, permission) => permission === 'fullscreen');
+
+  // The test-build gate. Open, and saying so, in an ordinary build.
+  const betaGate = new BetaGate(app.getPath('userData'));
+  ipcMain.handle('beta:status', async () => betaGate.status());
+  ipcMain.handle('beta:activate', async (_event, key) => betaGate.activate(key));
 
   ipcMain.on('window:minimize', () => mainWindow?.minimize());
   ipcMain.on('window:maximize', () => (mainWindow?.isMaximized() ? mainWindow.unmaximize() : mainWindow?.maximize()));

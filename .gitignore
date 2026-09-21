@@ -7,3 +7,6 @@ release/
 *.tsbuildinfo
 .DS_Store
 *.log
+
+# A test build's key hash and end date. Made by scripts/make-test-build.cjs; never committed.
+electron/betaConfig.json

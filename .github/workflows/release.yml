@@ -28,6 +28,15 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - name: Make this a test build, when a test key has been set
+        shell: bash
+        env:
+          TEST_BUILD_CONFIG: ${{ secrets.TEST_BUILD_CONFIG }}
+        # The key's hash and the end date, made by scripts/make-test-build.cjs.
+        # Kept as a secret and never committed, so the same key opens both
+        # platforms' builds. With no secret set, the build is an ordinary one.
+        run: |
+          if [ -n "$TEST_BUILD_CONFIG" ]; then printf '%s' "$TEST_BUILD_CONFIG" > electron/betaConfig.json; echo 'test build'; else echo 'ordinary build'; fi
       - run: npm run build
 
       - name: Import the Developer ID certificate
@@ -115,6 +124,15 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - name: Make this a test build, when a test key has been set
+        shell: bash
+        env:
+          TEST_BUILD_CONFIG: ${{ secrets.TEST_BUILD_CONFIG }}
+        # The key's hash and the end date, made by scripts/make-test-build.cjs.
+        # Kept as a secret and never committed, so the same key opens both
+        # platforms' builds. With no secret set, the build is an ordinary one.
+        run: |
+          if [ -n "$TEST_BUILD_CONFIG" ]; then printf '%s' "$TEST_BUILD_CONFIG" > electron/betaConfig.json; echo 'test build'; else echo 'ordinary build'; fi
       - run: npm run build
       - run: npx electron-builder --win --publish never
       - uses: actions/upload-artifact@v4

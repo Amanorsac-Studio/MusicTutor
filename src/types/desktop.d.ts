@@ -24,6 +24,15 @@ export type StreamStatusBridge = {
 
 export type StemName = 'drums' | 'bass' | 'other' | 'vocals' | 'guitar' | 'piano';
 
+/** Where a test build stands. An ordinary build is always open. */
+export type BetaStatus = {
+  testBuild: boolean;
+  state: 'open' | 'locked' | 'expired';
+  expiresAt?: string;
+  daysLeft?: number;
+  wrongKey?: boolean;
+};
+
 export type DesktopBridge = {
   isDesktop: boolean;
   minimize: () => void;
@@ -91,6 +100,9 @@ export type DesktopBridge = {
    * around it — its audio is never stored a second time; reopening a song
    * rebuilds the mix by summing its already-cached stems.
    */
+  /** The test-build gate: one shared key and an end date. Not the licence system. */
+  betaStatus?: () => Promise<BetaStatus>;
+  betaActivate?: (key: string) => Promise<BetaStatus>;
   /** Pack a recording and its MIDI into one file, asking where to put it. Null if cancelled. */
   shareLesson?: (videoPath: string) => Promise<{ path: string; withMidi: boolean } | null>;
   /** The bytes of a lesson file somebody sent. Only lesson files can be read this way. */

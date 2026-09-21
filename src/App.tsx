@@ -13,6 +13,7 @@ import { StreamPage } from './pages/StreamPage';
 import { LearnPage } from './pages/LearnPage';
 import { learnPlayer, trackPlayer } from './lib/player';
 import { learnSession } from './lib/learn';
+import { TestBuildGate } from './components/TestBuildGate';
 import { formatDuration } from './lib/settings';
 
 type Workspace = 'Studio' | 'Learn' | 'Devices' | 'Mixer' | 'Stream' | 'Library' | 'Settings';
@@ -182,8 +183,10 @@ function Shell() {
 
 export default function App() {
   return (
-    <StudioProvider>
-      <Shell />
-    </StudioProvider>
+    <TestBuildGate>
+      <StudioProvider>
+        <Shell />
+      </StudioProvider>
+    </TestBuildGate>
   );
 }

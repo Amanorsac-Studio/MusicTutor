@@ -636,3 +636,20 @@ input,textarea,.chat-line,.field-path,.selectable,[contenteditable]{user-select:
 .learn-live-side{justify-content:flex-start}
 .learn-status .learn-exact{color:#7fe0b0}
 .panel-heading-actions{display:flex;align-items:center;gap:2px}
+
+/* ================= Test-build gate ================= */
+.gate{height:100vh;display:grid;place-items:center;padding:24px;-webkit-app-region:drag}
+.gate-card{width:min(440px,100%);border:1px solid var(--line);border-radius:14px;background:linear-gradient(160deg,#0d1b28,#09141f);
+  padding:30px 30px 26px;text-align:center;box-shadow:0 30px 80px #000a;-webkit-app-region:no-drag}
+.gate-card .brand{justify-content:center;margin-bottom:18px}
+.gate-card h1{font-size:19px;margin:0 0 8px}
+.gate-card p{font-size:12px;line-height:1.7;color:#8a9db0;margin:0 0 16px}
+.gate-card input{width:100%;text-align:center;letter-spacing:.12em;text-transform:uppercase;font-size:15px;padding:12px;
+  border:1px solid #2c455a;border-radius:8px;background:#091520;color:#fff;outline:none;font-variant-numeric:tabular-nums}
+.gate-card input:focus{border-color:var(--blue)}
+.gate-card .primary{width:100%;margin-top:10px;padding:12px}
+.gate-card .gate-error{color:#ff9fa4;font-size:11px;margin:10px 0 0;min-height:16px}
+.gate-card .gate-close{margin-top:14px;border:0;background:transparent;color:#6d8194;font-size:11px;cursor:pointer}
+.gate-card .gate-close:hover{color:#fff}
+.test-ribbon{position:fixed;left:50%;bottom:6px;transform:translateX(-50%);z-index:40;font-size:9px;letter-spacing:.1em;
+  text-transform:uppercase;color:#a58a5c;background:#0b1520cc;border:1px solid #3a2c12;border-radius:10px;padding:3px 10px;pointer-events:none}
