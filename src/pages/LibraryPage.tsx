@@ -215,7 +215,7 @@ export function LibraryPage({ onStudy }: { onStudy?: (videoPath: string) => void
           <Library />
           <b>Where they live</b>
           <p>
-            Both sit in folders on this PC, under your Videos and Documents. Open folder
+            Both sit in one folder on this computer, Documents, Amanorsac Studio, MusicTutor. Open folder
             takes you there, so you can back them up, rename them or send one to someone.
             Nothing is uploaded anywhere.
           </p>

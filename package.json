@@ -1,6 +1,6 @@
 {
   "name": "musictutor-studio",
-  "description": "Desktop lesson production studio for piano educators",
+  "description": "Lesson studio for music teachers: record and stream tutorials, and learn songs by ear",
   "author": "Amanorsac Studio",
   "private": true,
   "version": "0.1.0",
@@ -39,7 +39,8 @@
     "appId": "studio.amanorsac.musictutor",
     "productName": "MusicTutor",
     "directories": {
-      "output": "installer"
+      "output": "installer",
+      "buildResources": "build"
     },
     "electronDist": "node_modules/electron/dist",
     "files": [
@@ -50,8 +51,15 @@
       "!node_modules/onnxruntime-node/bin/**/linux/**"
     ],
     "win": {
-      "target": "nsis",
-      "artifactName": "MusicTutor-Setup-${version}.${ext}",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-Windows.${ext}",
       "files": [
         "dist/**/*",
         "electron/**/*",
@@ -60,14 +68,21 @@
         "!node_modules/onnxruntime-node/bin/**/linux/**",
         "!node_modules/onnxruntime-node/bin/**/darwin/**",
         "!node_modules/onnxruntime-node/bin/**/win32/arm64/**"
-      ]
+      ],
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
+      "perMachine": true,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "MusicTutor"
+      "shortcutName": "MusicTutor",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "uninstallDisplayName": "MusicTutor",
+      "deleteAppDataOnUninstall": false,
+      "license": "build/LICENCE.txt"
     },
     "asarUnpack": [
       "node_modules/ffmpeg-static/**",
@@ -82,7 +97,26 @@
         "!**/*.map",
         "!node_modules/onnxruntime-node/bin/**/linux/**",
         "!node_modules/onnxruntime-node/bin/**/win32/**"
-      ]
+      ],
+      "category": "public.app-category.music",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "artifactName": "${productName}-${version}-macOS.${ext}",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "MusicTutor records your microphone and instruments into your lessons.",
+        "NSCameraUsageDescription": "MusicTutor shows your cameras in the lessons you record and stream."
+      }
     },
     "fileAssociations": [
       {
@@ -91,7 +125,23 @@
         "description": "A lesson shared from MusicTutor: a recording and the MIDI played during it",
         "role": "Editor"
       }
-    ]
+    ],
+    "copyright": "Copyright © 2026 Amanorsac Studio",
+    "icon": "build/icon.png",
+    "extraFiles": [
+      {
+        "from": "build/README.txt",
+        "to": "README.txt"
+      },
+      {
+        "from": "THIRD_PARTY_NOTICES.txt",
+        "to": "THIRD_PARTY_NOTICES.txt"
+      }
+    ],
+    "dmg": {
+      "title": "${productName} ${version}",
+      "sign": false
+    }
   },
   "dependencies": {
     "ffmpeg-static": "^5.3.0",

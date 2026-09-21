@@ -17,8 +17,25 @@ let mainWindow;
 /** Stops the separation process on quit. Set once the app is ready. */
 let stopStemWorker;
 
-const projectsFolder = () => path.join(app.getPath('documents'), 'MusicTutor', 'Projects');
-const recordingsFolder = () => path.join(app.getPath('videos'), 'MusicTutor');
+/**
+ * Where the app keeps things, as the studio's File & Data Conventions fix it.
+ * Two places and nothing anywhere else: what the person made, in their
+ * Documents, and the machine's own state, out of their way.
+ */
+const PRODUCT = 'MusicTutor';
+const contentFolder = () => path.join(app.getPath('documents'), 'Amanorsac Studio', PRODUCT);
+const stateFolder = () => (process.platform === 'win32'
+  ? path.join(process.env.LOCALAPPDATA || path.join(app.getPath('home'), 'AppData', 'Local'), 'Amanorsac Studio', PRODUCT)
+  : path.join(app.getPath('appData'), 'Amanorsac Studio', PRODUCT));
+
+// Where Electron would have put it, read before it is changed, so data from
+// earlier builds can be found and carried over.
+const legacyStateFolder = app.getPath('userData');
+// A test run names its own folder on the command line; leave that alone.
+if (!app.commandLine.hasSwitch('user-data-dir')) app.setPath('userData', stateFolder());
+
+const projectsFolder = () => path.join(contentFolder(), 'Projects');
+const recordingsFolder = () => path.join(contentFolder(), 'Recordings');
 
 /** Project files, under the current name and the one the app first shipped with. */
 const PROJECT_EXTENSIONS = ['.musictutor.json', '.pianotutor.json'];
@@ -27,27 +44,38 @@ const stripProjectExtension = name =>
   PROJECT_EXTENSIONS.reduce((result, extension) => result.replace(extension, ''), name);
 
 /**
- * Carry everything over from when the app was called PianoTutor.
+ * Carry everything over from where earlier builds kept it.
  *
- * The rename moves the settings folder and both library folders, and an update
- * that appeared to delete every saved lesson would be unforgivable. Each old
- * folder is copied across once, only when the new one does not exist yet, so a
- * later launch never overwrites newer work with older.
+ * The app has been called PianoTutor, and then kept its data in folders of its
+ * own naming before the studio's conventions were applied. An update that
+ * appeared to delete every saved lesson would be unforgivable, so each old
+ * place is copied across once, only into a place that does not exist yet, and
+ * the first old place that exists wins. Copied, not moved: a copy that fails
+ * half way leaves the original whole.
  */
-function migrateFromPianoTutor() {
+function migrateEarlierData() {
   const fsSync = require('fs');
-  const moves = [
-    [path.join(app.getPath('appData'), 'pianotutor-studio'), app.getPath('userData')],
-    [path.join(app.getPath('documents'), 'PianoTutor'), path.join(app.getPath('documents'), 'MusicTutor')],
-    [path.join(app.getPath('videos'), 'PianoTutor'), path.join(app.getPath('videos'), 'MusicTutor')],
-  ];
-  moves.forEach(([from, to]) => {
+  const documents = app.getPath('documents');
+  const videos = app.getPath('videos');
+  const copyFirst = (candidates, target) => {
     try {
-      if (!fsSync.existsSync(from) || fsSync.existsSync(to)) return;
-      // Copied rather than renamed: a copy that fails halfway leaves the
-      // original intact, where a failed rename can leave neither.
-      fsSync.cpSync(from, to, { recursive: true });
+      if (fsSync.existsSync(target)) return;
+      const source = candidates.find(candidate => fsSync.existsSync(candidate));
+      if (!source) return;
+      fsSync.mkdirSync(path.dirname(target), { recursive: true });
+      fsSync.cpSync(source, target, { recursive: true });
     } catch { /* the old data stays where it was, which loses nothing */ }
+  };
+
+  copyFirst([path.join(documents, 'MusicTutor', 'Projects'), path.join(documents, 'PianoTutor', 'Projects')], projectsFolder());
+  copyFirst([path.join(videos, 'MusicTutor'), path.join(videos, 'PianoTutor')], recordingsFolder());
+
+  // Machine state: only what is worth keeping. The rest of the old folder is
+  // the browser engine's caches, which rebuild themselves.
+  const oldStates = [legacyStateFolder, path.join(app.getPath('appData'), 'pianotutor-studio')]
+    .filter(folder => path.resolve(folder) !== path.resolve(app.getPath('userData')));
+  ['settings.json', 'models', 'stems', 'learn-library', 'Local Storage'].forEach(name => {
+    copyFirst(oldStates.map(folder => path.join(folder, name)), path.join(app.getPath('userData'), name));
   });
 }
 
@@ -137,7 +165,7 @@ function createWindow() {
 
 // Before anything reads a setting, so the first launch under the new name
 // finds the old data already in place.
-migrateFromPianoTutor();
+migrateEarlierData();
 
 // Opening a lesson file while the app is already running would otherwise start
 // a second copy. Hand it to the first one instead.

@@ -1,0 +1,15 @@
+MusicTutor - Amanorsac Studio
+
+By installing MusicTutor you agree to the Amanorsac Studio licence agreement,
+published in full at:
+
+    https://amanorsac.studio/legal
+
+How Amanorsac Studio treats your data is set out at:
+
+    https://amanorsac.studio/privacy
+
+This version needs no licence key and no account.
+
+MusicTutor includes open-source software. The notices are installed with the
+application as THIRD_PARTY_NOTICES.txt.

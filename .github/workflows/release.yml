@@ -1,0 +1,124 @@
+# Builds the installers. Follows 05_AMANORSAC_MACOS_SIGNING_STANDARD:
+# Developer ID signing, notarisation checked explicitly, stapled, then assessed
+# the way a customer's Mac would.
+#
+# macOS runners bill at ten times Linux on a private repository, so this runs
+# only on a version tag or when started by hand, and never twice at once.
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+      - name: Import the Developer ID certificate
+        env:
+          MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+        run: |
+          if [ -z "$MAC_CERT_P12" ]; then
+            echo "::error::MAC_CERT_P12 is empty. Organisation secrets set to 'Private repositories' are invisible to a public repository."
+            exit 1
+          fi
+          KEYCHAIN=build.keychain
+          KEYCHAIN_PASSWORD=$(uuidgen)
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          security default-keychain -s "$KEYCHAIN"
+          echo "$MAC_CERT_P12" | tr -d '[:space:]' | base64 --decode > app.p12
+          trim () { printf '%s' "$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'; }
+          security import app.p12 -k "$KEYCHAIN" -P "$(trim "$MAC_CERT_PASSWORD")" -T /usr/bin/codesign
+          rm -f app.p12
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security find-identity -v
+
+      - name: Build and sign the application
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'true'
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        # Notarising is done below, by hand, because the tool's own wait exits 0
+        # even when Apple says Invalid.
+        run: npx electron-builder --mac --publish never -c.mac.notarize=false
+
+      - name: Verify the signature before spending a trip to Apple
+        run: |
+          APP=$(find installer -maxdepth 2 -name "MusicTutor.app" | head -1)
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign --display --verbose=2 "$APP" 2>&1 | grep -q "flags=.*runtime"
+          codesign --display --verbose=4 "$APP" 2>&1 | grep -q "^Timestamp="
+          if codesign --display --entitlements - --xml "$APP" | grep -q "get-task-allow"; then
+            echo "::error::get-task-allow is present; Apple will reject this."; exit 1
+          fi
+
+      - name: Notarise, staple, assess
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          DMG=$(ls installer/MusicTutor-*-macOS.dmg | head -1)
+          if printf '%s' "$ASC_KEY_P8" | grep -q "BEGIN PRIVATE KEY"; then
+            printf '%s' "$ASC_KEY_P8" > asc.p8
+          else
+            printf '%s' "$ASC_KEY_P8" | tr -d '[:space:]' | base64 --decode > asc.p8
+          fi
+          RESULT=$(xcrun notarytool submit "$DMG" --key asc.p8 --key-id "$ASC_KEY_ID" \
+                     --issuer "$ASC_ISSUER_ID" --wait --timeout 30m --output-format json)
+          STATUS=$(printf '%s' "$RESULT" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("status",""))')
+          if [ "$STATUS" != "Accepted" ]; then
+            xcrun notarytool log "$(printf '%s' "$RESULT" | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')" \
+              --key asc.p8 --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID"
+            rm -f asc.p8
+            exit 1
+          fi
+          rm -f asc.p8
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+          spctl --assess -vv --type open --context context:primary-signature "$DMG"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MusicTutor-macOS
+          path: installer/MusicTutor-*-macOS.dmg
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npx electron-builder --win --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MusicTutor-Windows
+          path: installer/MusicTutor-*-Windows.exe
+          if-no-files-found: error
