@@ -4,6 +4,8 @@
 #
 # macOS runners bill at ten times Linux on a private repository, so this runs
 # only on a version tag or when started by hand, and never twice at once.
+# The repository lives at Amanorsac-Studio/MusicTutor, where the signing
+# secrets are visible.
 name: Release
 
 on:
