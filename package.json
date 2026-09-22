@@ -95,7 +95,8 @@
         "package.json",
         "!**/*.map",
         "!node_modules/onnxruntime-node/bin/**/linux/**",
-        "!node_modules/onnxruntime-node/bin/**/win32/**"
+        "!node_modules/onnxruntime-node/bin/**/win32/**",
+        "!node_modules/onnxruntime-node/bin/**/darwin/x64/**"
       ],
       "category": "public.app-category.music",
       "target": [

@@ -70,7 +70,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         # Notarising is done below, by hand, because the tool's own wait exits 0
         # even when Apple says Invalid.
-        run: npx electron-builder --mac --publish never -c.mac.notarize=false
+        run: DEBUG=electron-builder,electron-osx-sign* npx electron-builder --mac --publish never -c.mac.notarize=false
 
       - name: Verify the signature before spending a trip to Apple
         run: |
