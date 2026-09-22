@@ -751,3 +751,14 @@ export const trackPlayer = new TrackPlayer();
 export const learnPlayer = new TrackPlayer({
   track: 'learn', trackLabel: 'Song being learned', click: 'learn-click', clickLabel: 'Learn click',
 });
+
+/**
+ * A third player, for the standalone Stems tab.
+ *
+ * Kept apart from the other two so splitting a song for its stems never steals
+ * the transport away from a backing track cued in Studio or a song being
+ * studied in Learn.
+ */
+export const stemsPlayer = new TrackPlayer({
+  track: 'stems', trackLabel: 'Stem separator', click: 'stems-click', clickLabel: 'Stems click',
+});

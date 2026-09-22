@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   Circle, GraduationCap, Library, Maximize2, Minus, MonitorPlay, Settings as SettingsIcon,
-  Radio, SlidersHorizontal, Upload, Wifi, X,
+  Radio, SlidersHorizontal, Upload, Waves, Wifi, X,
 } from 'lucide-react';
 import { StudioProvider, useStudio } from './lib/useStudio';
 import { Studio } from './pages/Studio';
@@ -11,16 +11,18 @@ import { LibraryPage } from './pages/LibraryPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { StreamPage } from './pages/StreamPage';
 import { LearnPage } from './pages/LearnPage';
+import { StemsPage } from './pages/StemsPage';
 import { learnPlayer, trackPlayer } from './lib/player';
 import { learnSession } from './lib/learn';
 import { TestBuildGate } from './components/TestBuildGate';
 import { formatDuration } from './lib/settings';
 
-type Workspace = 'Studio' | 'Learn' | 'Devices' | 'Mixer' | 'Stream' | 'Library' | 'Settings';
+type Workspace = 'Studio' | 'Learn' | 'Stems' | 'Devices' | 'Mixer' | 'Stream' | 'Library' | 'Settings';
 
 const WORKSPACES: Array<{ id: Workspace; label: string; Icon: typeof MonitorPlay }> = [
   { id: 'Studio', label: 'Tutorial', Icon: MonitorPlay },
   { id: 'Learn', label: 'Learn', Icon: GraduationCap },
+  { id: 'Stems', label: 'Stems', Icon: Waves },
   { id: 'Devices', label: 'Devices', Icon: Wifi },
   { id: 'Mixer', label: 'Mixer', Icon: SlidersHorizontal },
   { id: 'Stream', label: 'Stream', Icon: Radio },
@@ -159,6 +161,7 @@ function Shell() {
 
       {workspace === 'Studio' && <Studio onOpenStream={() => setWorkspace('Stream')} />}
       {workspace === 'Learn' && <LearnPage />}
+      {workspace === 'Stems' && <StemsPage />}
       {workspace === 'Devices' && <Devices />}
       {workspace === 'Mixer' && <Mixer />}
       {workspace === 'Stream' && <StreamPage />}
