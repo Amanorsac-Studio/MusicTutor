@@ -107,6 +107,9 @@ jobs:
           xcrun stapler staple "$DMG"
           xcrun stapler validate "$DMG"
           spctl --assess -vv --type open --context context:primary-signature "$DMG"
+          # And the verdict on the application itself, which is what a customer runs.
+          APP=$(find installer -maxdepth 2 -name "MusicTutor.app" | head -1)
+          spctl --assess -vv --type execute "$APP"
 
       - uses: actions/upload-artifact@v4
         with:

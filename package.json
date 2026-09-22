@@ -146,7 +146,7 @@
     "icon": "build/icon.png",
     "dmg": {
       "title": "${productName} ${version}",
-      "sign": false,
+      "sign": true,
       "contents": [
         {
           "x": 130,
