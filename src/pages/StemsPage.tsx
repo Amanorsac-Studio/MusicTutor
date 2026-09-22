@@ -54,7 +54,7 @@ export function StemsPage() {
     <main className="workspace-page stems-page">
       <header>
         <div>
-          <span className="eyebrow">EASY STEMS</span>
+          <span className="eyebrow">STEMS</span>
           <h1>Split a song into its instruments</h1>
           <p>Drums, bass, guitar, keys, vocals and everything else — separated on this computer, in minutes the first time and instantly after.</p>
         </div>

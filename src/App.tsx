@@ -22,7 +22,7 @@ type Workspace = 'Studio' | 'Learn' | 'Stems' | 'Devices' | 'Mixer' | 'Stream' |
 const WORKSPACES: Array<{ id: Workspace; label: string; Icon: typeof MonitorPlay }> = [
   { id: 'Studio', label: 'Tutorial', Icon: MonitorPlay },
   { id: 'Learn', label: 'Learn', Icon: GraduationCap },
-  { id: 'Stems', label: 'Easy Stems', Icon: Waves },
+  { id: 'Stems', label: 'Stems', Icon: Waves },
   { id: 'Devices', label: 'Devices', Icon: Wifi },
   { id: 'Mixer', label: 'Mixer', Icon: SlidersHorizontal },
   { id: 'Stream', label: 'Stream', Icon: Radio },
