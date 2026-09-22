@@ -68,7 +68,17 @@
         "!node_modules/onnxruntime-node/bin/**/darwin/**",
         "!node_modules/onnxruntime-node/bin/**/win32/arm64/**"
       ],
-      "icon": "build/icon.ico"
+      "icon": "build/icon.ico",
+      "extraFiles": [
+        {
+          "from": "build/README.txt",
+          "to": "README.txt"
+        },
+        {
+          "from": "THIRD_PARTY_NOTICES.txt",
+          "to": "THIRD_PARTY_NOTICES.txt"
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,
@@ -116,7 +126,13 @@
       "extendInfo": {
         "NSMicrophoneUsageDescription": "MusicTutor records your microphone and instruments into your lessons.",
         "NSCameraUsageDescription": "MusicTutor shows your cameras in the lessons you record and stream."
-      }
+      },
+      "extraResources": [
+        {
+          "from": "THIRD_PARTY_NOTICES.txt",
+          "to": "THIRD_PARTY_NOTICES.txt"
+        }
+      ]
     },
     "fileAssociations": [
       {
@@ -128,19 +144,29 @@
     ],
     "copyright": "Copyright © 2026 Amanorsac Studio",
     "icon": "build/icon.png",
-    "extraFiles": [
-      {
-        "from": "build/README.txt",
-        "to": "README.txt"
-      },
-      {
-        "from": "THIRD_PARTY_NOTICES.txt",
-        "to": "THIRD_PARTY_NOTICES.txt"
-      }
-    ],
     "dmg": {
       "title": "${productName} ${version}",
-      "sign": false
+      "sign": false,
+      "contents": [
+        {
+          "x": 130,
+          "y": 170,
+          "type": "file"
+        },
+        {
+          "x": 410,
+          "y": 170,
+          "type": "link",
+          "path": "/Applications"
+        },
+        {
+          "x": 270,
+          "y": 330,
+          "type": "file",
+          "path": "build/README.txt",
+          "name": "Read Me First.txt"
+        }
+      ]
     }
   },
   "dependencies": {
